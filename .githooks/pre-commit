@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if ! git diff --quiet || [ -n "$(git ls-files --others --exclude-standard)" ]; then
-  git stash push --quiet --keep-index --include-untracked
-  trap 'git stash pop --quiet' EXIT
-fi
+staged=$(mktemp -d)
+trap 'rm -rf "$staged"' EXIT
+git checkout-index --all --prefix="$staged/"
+export CARGO_TARGET_DIR="$PWD/target"
+cd "$staged"
 
 cargo fmt --check
 cargo clippy --all-targets --quiet -- -D warnings
