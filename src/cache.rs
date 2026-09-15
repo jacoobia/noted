@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, Row, params};
@@ -35,7 +35,7 @@ pub struct Entry {
 
 impl Entry {
     pub fn is_fresh(&self, now: i64) -> bool {
-        now < self.fetched_at + self.ttl_secs
+        now < self.fetched_at.saturating_add(self.ttl_secs)
     }
 
     fn from_row(row: &Row) -> rusqlite::Result<Self> {
@@ -64,7 +64,7 @@ pub struct Listing {
 
 impl Listing {
     pub fn is_fresh(&self, now: i64) -> bool {
-        now < self.fetched_at + self.ttl_secs
+        now < self.fetched_at.saturating_add(self.ttl_secs)
     }
 }
 
@@ -78,7 +78,7 @@ impl Store {
             fs::create_dir_all(parent)?;
         }
         let conn = Connection::open(path)?;
-        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        conn.busy_timeout(Duration::from_secs(5))?;
         conn.execute_batch(SCHEMA)?;
         Ok(Self { conn })
     }
@@ -165,15 +165,17 @@ impl Store {
 }
 
 pub fn db_path() -> PathBuf {
-    std::env::var_os("NOTED_DB").map_or_else(
-        || {
-            dirs::cache_dir()
-                .unwrap_or_else(std::env::temp_dir)
-                .join("noted")
-                .join("cache.db")
-        },
-        PathBuf::from,
-    )
+    std::env::var_os("NOTED_DB")
+        .filter(|path| !path.is_empty())
+        .map_or_else(
+            || {
+                dirs::cache_dir()
+                    .unwrap_or_else(std::env::temp_dir)
+                    .join("noted")
+                    .join("cache.db")
+            },
+            PathBuf::from,
+        )
 }
 
 pub fn now() -> i64 {
@@ -262,11 +264,36 @@ mod tests {
     }
 
     #[test]
+    fn huge_ttl_never_expires() {
+        let mut e = entry("https://a.io/", 100);
+        e.ttl_secs = i64::MAX;
+        assert!(e.is_fresh(i64::MAX - 1));
+    }
+
+    #[test]
+    fn opens_in_wal_mode() {
+        let (_dir, store) = store();
+        let mode: String = store
+            .conn
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(mode, "wal");
+    }
+
+    #[test]
     fn remove_stale_keeps_fresh() {
         let (_dir, store) = store();
         store.put(&entry("https://old.io/", 0)).unwrap();
+        store.put(&entry("https://edge.io/", 60)).unwrap();
         store.put(&entry("https://new.io/", 100)).unwrap();
-        assert_eq!(store.remove_stale(120).unwrap(), 1);
+        assert!(
+            !store
+                .get("https://edge.io/")
+                .unwrap()
+                .unwrap()
+                .is_fresh(120)
+        );
+        assert_eq!(store.remove_stale(120).unwrap(), 2);
         assert!(store.get("https://old.io/").unwrap().is_none());
         assert!(store.get("https://new.io/").unwrap().is_some());
     }
