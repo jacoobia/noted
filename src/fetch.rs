@@ -1,6 +1,9 @@
+use std::time::Duration;
+
 use anyhow::Result;
 
 const MAX_BODY: u64 = 20 * 1024 * 1024;
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct Response {
     pub status: u16,
@@ -13,6 +16,7 @@ pub struct Response {
 pub fn fetch(url: &str, etag: Option<&str>, last_modified: Option<&str>) -> Result<Response> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
+        .timeout_global(Some(timeout()))
         .build()
         .into();
     let mut request = agent.get(url).header("User-Agent", user_agent());
@@ -47,6 +51,13 @@ pub fn fetch(url: &str, etag: Option<&str>, last_modified: Option<&str>) -> Resu
         last_modified,
         body,
     })
+}
+
+fn timeout() -> Duration {
+    std::env::var("NOTED_TIMEOUT")
+        .ok()
+        .and_then(|value| humantime::parse_duration(&value).ok())
+        .unwrap_or(DEFAULT_TIMEOUT)
 }
 
 pub fn user_agent() -> String {

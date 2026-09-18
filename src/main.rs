@@ -69,6 +69,7 @@ fn run(command: Command) -> Result<ExitCode> {
             section,
             quiet,
         } => {
+            get::cache_key(&url)?;
             let store = Store::open(&db_path())?;
             get::run(
                 &store,

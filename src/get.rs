@@ -50,7 +50,9 @@ pub fn run(store: &Store, args: &GetArgs) -> Result<ExitCode> {
 
     entry.ttl_secs = ttl_secs;
     if !args.refresh && entry.is_fresh(now) {
-        store.touch(&key, entry.fetched_at, ttl_secs)?;
+        if args.ttl.is_some() {
+            store.touch(&key, entry.fetched_at, ttl_secs)?;
+        }
         store.record_hit(&key)?;
         return serve(&entry, "hit", now, args);
     }

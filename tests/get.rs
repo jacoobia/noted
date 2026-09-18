@@ -328,3 +328,40 @@ fn not_found_is_not_cached() {
     }
     assert_eq!(server.hits("/gone"), 2);
 }
+
+#[test]
+fn hung_server_times_out_to_stale() {
+    let server = TestServer::start(vec![(
+        "/slow",
+        counting(|n| {
+            if n > 1 {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+            }
+            Reply::ok("text/plain", "cached")
+        }),
+    )]);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    let args = ["get", "--ttl", "0s", &server.url("/slow")];
+    noted(&db).args(args).assert().success();
+    noted(&db)
+        .env("NOTED_TIMEOUT", "1s")
+        .args(args)
+        .timeout(std::time::Duration::from_secs(10))
+        .assert()
+        .success()
+        .stdout("cached")
+        .stderr(predicate::str::contains("noted: stale"));
+}
+
+#[test]
+fn bad_url_creates_no_database() {
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    noted(&db)
+        .args(["get", "file:///etc/passwd"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("only http and https"));
+    assert!(!db.exists());
+}
