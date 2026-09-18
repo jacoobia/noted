@@ -113,6 +113,18 @@ impl TestServer {
             .count()
     }
 
+    pub fn stop(self) {
+        let addr = self.base.trim_start_matches("http://").to_owned();
+        drop(self);
+        for _ in 0..200 {
+            if std::net::TcpStream::connect(&addr).is_err() {
+                return;
+            }
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("test server at {addr} never stopped accepting connections");
+    }
+
     pub fn last_header(&self, path: &str, name: &str) -> Option<String> {
         self.seen
             .lock()

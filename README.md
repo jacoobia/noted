@@ -16,6 +16,8 @@ noted get https://oldschool.runescape.wiki/w/Abyssal_whip --ttl 7d
 
 The first call fetches and stores the page. Calls after that come from the cache until the TTL runs out. Without `--ttl`, a new entry gets 1 day and an existing one keeps the TTL it was stored with.
 
+Once an entry goes stale, noted asks the server whether it changed (ETag / Last-Modified). A `304` just resets the clock, so an expired page costs a tiny request instead of a full download. `--ttl 0s` checks every time, and `--refresh` skips the cache for one call. If the server is down or returns a 5xx, I get the stale copy with a warning. Other errors (404 and so on) aren't cached and exit 1.
+
 The body goes to stdout. A status line goes to stderr, e.g. `noted: hit · age 3h · ttl 7d · 200 text/html`. `-q` hides it.
 
 The cache lives in my OS cache dir (`%LOCALAPPDATA%\noted\cache.db` on Windows). Set `NOTED_DB` to use another file. Set `NOTED_CONTACT` to add contact details to the User-Agent, which the OSRS Wiki asks for.

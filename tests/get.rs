@@ -1,8 +1,9 @@
 mod common;
 
 use std::process::Stdio;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-use common::{Reply, TestServer, always, noted};
+use common::{Handler, Reply, Seen, TestServer, always, noted};
 use predicates::prelude::*;
 use tempfile::TempDir;
 
@@ -148,4 +149,182 @@ fn concurrent_processes_succeed() {
         assert!(out.status.success(), "{stderr}");
         assert!(!stderr.contains("locked"), "{stderr}");
     }
+}
+
+fn counting(reply: impl Fn(usize) -> Reply + Send + Sync + 'static) -> Handler {
+    let calls = AtomicUsize::new(0);
+    Box::new(move |_| reply(calls.fetch_add(1, Ordering::SeqCst) + 1))
+}
+
+#[test]
+fn stale_with_etag_revalidates_304() {
+    let server = TestServer::start(vec![(
+        "/e",
+        Box::new(|seen: &Seen| {
+            if seen.header("If-None-Match") == Some("\"v1\"") {
+                Reply::status(304)
+            } else {
+                Reply::ok("text/plain", "etag body").header("ETag", "\"v1\"")
+            }
+        }),
+    )]);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    let args = ["get", "--ttl", "0s", &server.url("/e")];
+    noted(&db).args(args).assert().success();
+    noted(&db)
+        .args(args)
+        .assert()
+        .success()
+        .stdout("etag body")
+        .stderr(predicate::str::contains("noted: revalidated"));
+    assert_eq!(server.hits("/e"), 2);
+    assert_eq!(
+        server.last_header("/e", "If-None-Match").as_deref(),
+        Some("\"v1\"")
+    );
+}
+
+#[test]
+fn stale_uses_last_modified() {
+    const STAMP: &str = "Wed, 01 Jan 2026 00:00:00 GMT";
+    let server = TestServer::start(vec![(
+        "/lm",
+        Box::new(|seen: &Seen| {
+            if seen.header("If-Modified-Since") == Some(STAMP) {
+                Reply::status(304)
+            } else {
+                Reply::ok("text/plain", "lm body").header("Last-Modified", STAMP)
+            }
+        }),
+    )]);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    let args = ["get", "--ttl", "0s", &server.url("/lm")];
+    noted(&db).args(args).assert().success();
+    noted(&db)
+        .args(args)
+        .assert()
+        .success()
+        .stdout("lm body")
+        .stderr(predicate::str::contains("noted: revalidated"));
+}
+
+#[test]
+fn stale_without_validators_refetches() {
+    let server = TestServer::start(vec![(
+        "/v",
+        counting(|n| Reply::ok("text/plain", format!("v{n}"))),
+    )]);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    let args = ["get", "--ttl", "0s", &server.url("/v")];
+    noted(&db).args(args).assert().success().stdout("v1");
+    noted(&db)
+        .args(args)
+        .assert()
+        .success()
+        .stdout("v2")
+        .stderr(predicate::str::contains("noted: refreshed"));
+}
+
+#[test]
+fn refresh_flag_bypasses_fresh() {
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    let server = page_server();
+    noted(&db)
+        .args(["get", "--ttl", "1d", &server.url("/page")])
+        .assert()
+        .success();
+    noted(&db)
+        .args(["get", "--refresh", &server.url("/page")])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("noted: refreshed"));
+    assert_eq!(server.hits("/page"), 2);
+}
+
+#[test]
+fn explicit_ttl_overwrites_stored() {
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    let server = page_server();
+    let url = server.url("/page");
+    noted(&db)
+        .args(["get", "--ttl", "0s", &url])
+        .assert()
+        .success();
+    noted(&db)
+        .args(["get", "--ttl", "1d", &url])
+        .assert()
+        .success();
+    noted(&db)
+        .args(["get", &url])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("noted: hit").and(predicate::str::contains("ttl 1d")));
+    assert_eq!(server.hits("/page"), 1);
+}
+
+#[test]
+fn server_down_serves_stale() {
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    let server = page_server();
+    let url = server.url("/page");
+    noted(&db)
+        .args(["get", "--ttl", "0s", &url])
+        .assert()
+        .success();
+    server.stop();
+    noted(&db)
+        .args(["get", &url])
+        .assert()
+        .success()
+        .stdout("hello page")
+        .stderr(predicate::str::contains("noted: stale"));
+}
+
+#[test]
+fn server_500_serves_stale() {
+    let server = TestServer::start(vec![(
+        "/flaky",
+        counting(|n| {
+            if n == 1 {
+                Reply::ok("text/plain", "good")
+            } else {
+                Reply::status(500).body("boom")
+            }
+        }),
+    )]);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    let args = ["get", "--ttl", "0s", &server.url("/flaky")];
+    noted(&db).args(args).assert().success();
+    noted(&db)
+        .args(args)
+        .assert()
+        .success()
+        .stdout("good")
+        .stderr(predicate::str::contains("noted: stale"));
+}
+
+#[test]
+fn not_found_is_not_cached() {
+    let server = TestServer::start(vec![(
+        "/gone",
+        always(|| Reply::status(404).body("missing")),
+    )]);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    for _ in 0..2 {
+        noted(&db)
+            .args(["get", &server.url("/gone")])
+            .assert()
+            .code(1)
+            .stdout("missing")
+            .stderr(predicate::str::contains("noted: HTTP 404"));
+    }
+    assert_eq!(server.hits("/gone"), 2);
 }

@@ -6,7 +6,7 @@ use anyhow::{Result, bail};
 use url::Url;
 
 use crate::cache::{Entry, Store, now};
-use crate::fetch::fetch;
+use crate::fetch::{Response, fetch};
 
 const DEFAULT_TTL_SECS: i64 = 24 * 60 * 60;
 
@@ -38,18 +38,58 @@ pub fn run(store: &Store, args: &GetArgs) -> Result<ExitCode> {
         .or(cached.as_ref().map(|e| e.ttl_secs))
         .unwrap_or(DEFAULT_TTL_SECS);
 
-    if let Some(mut entry) = cached {
-        entry.ttl_secs = ttl_secs;
-        if !args.refresh && entry.is_fresh(now) {
-            store.touch(&key, entry.fetched_at, ttl_secs)?;
-            store.record_hit(&key)?;
-            return serve(&entry, "hit", now, args);
-        }
+    let Some(mut entry) = cached else {
+        return match fetch(&key, None, None)? {
+            response if is_success(response.status) => {
+                let entry = store_response(store, key, response, now, ttl_secs)?;
+                serve(&entry, "miss", now, args)
+            }
+            response => http_error(response.status, &response.body),
+        };
+    };
+
+    entry.ttl_secs = ttl_secs;
+    if !args.refresh && entry.is_fresh(now) {
+        store.touch(&key, entry.fetched_at, ttl_secs)?;
+        store.record_hit(&key)?;
+        return serve(&entry, "hit", now, args);
     }
 
-    let response = fetch(&key, None, None)?;
+    match fetch(&key, entry.etag.as_deref(), entry.last_modified.as_deref()) {
+        Ok(response) if response.status == 304 => {
+            store.touch(&key, now, ttl_secs)?;
+            entry.fetched_at = now;
+            serve(&entry, "revalidated", now, args)
+        }
+        Ok(response) if is_success(response.status) => {
+            let entry = store_response(store, key, response, now, ttl_secs)?;
+            serve(&entry, "refreshed", now, args)
+        }
+        Ok(response) if response.status >= 500 => {
+            eprintln!("noted: HTTP {}, serving the stale copy", response.status);
+            serve(&entry, "stale", now, args)
+        }
+        Err(err) => {
+            eprintln!("noted: {err:#}, serving the stale copy");
+            serve(&entry, "stale", now, args)
+        }
+        Ok(response) => http_error(response.status, &response.body),
+    }
+}
+
+fn is_success(status: u16) -> bool {
+    (200..300).contains(&status)
+}
+
+fn store_response(
+    store: &Store,
+    url: String,
+    response: Response,
+    now: i64,
+    ttl_secs: i64,
+) -> Result<Entry> {
     let entry = Entry {
-        url: key,
+        url,
         status: response.status,
         content_type: response.content_type,
         etag: response.etag,
@@ -60,7 +100,13 @@ pub fn run(store: &Store, args: &GetArgs) -> Result<ExitCode> {
         hits: 0,
     };
     store.put(&entry)?;
-    serve(&entry, "miss", now, args)
+    Ok(entry)
+}
+
+fn http_error(status: u16, body: &[u8]) -> Result<ExitCode> {
+    eprintln!("noted: HTTP {status}");
+    std::io::stdout().write_all(body)?;
+    Ok(ExitCode::FAILURE)
 }
 
 fn serve(entry: &Entry, state: &str, now: i64, args: &GetArgs) -> Result<ExitCode> {
