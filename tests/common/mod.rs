@@ -113,18 +113,6 @@ impl TestServer {
             .count()
     }
 
-    pub fn stop(self) {
-        let addr = self.base.trim_start_matches("http://").to_owned();
-        drop(self);
-        for _ in 0..200 {
-            if std::net::TcpStream::connect(&addr).is_err() {
-                return;
-            }
-            thread::sleep(std::time::Duration::from_millis(10));
-        }
-        panic!("test server at {addr} never stopped accepting connections");
-    }
-
     pub fn last_header(&self, path: &str, name: &str) -> Option<String> {
         self.seen
             .lock()
@@ -146,4 +134,25 @@ pub fn noted(db: &Path) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_noted"));
     cmd.env("NOTED_DB", db).env_remove("NOTED_CONTACT");
     cmd
+}
+
+pub fn answer_once_then_reset(body: &'static str) -> String {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/page", listener.local_addr().unwrap());
+    thread::spawn(move || {
+        let mut connections = listener.incoming();
+        if let Some(Ok(mut stream)) = connections.next() {
+            let mut request = [0; 4096];
+            let _ = std::io::Read::read(&mut stream, &mut request);
+            let reply = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = std::io::Write::write_all(&mut stream, reply.as_bytes());
+        }
+        for stream in connections {
+            drop(stream);
+        }
+    });
+    url
 }

@@ -49,10 +49,10 @@ pub fn run(store: &Store, args: &GetArgs) -> Result<ExitCode> {
     };
 
     entry.ttl_secs = ttl_secs;
+    if args.ttl.is_some() {
+        store.touch(&key, entry.fetched_at, ttl_secs)?;
+    }
     if !args.refresh && entry.is_fresh(now) {
-        if args.ttl.is_some() {
-            store.touch(&key, entry.fetched_at, ttl_secs)?;
-        }
         store.record_hit(&key)?;
         return serve(&entry, "hit", now, args);
     }
@@ -71,6 +71,7 @@ pub fn run(store: &Store, args: &GetArgs) -> Result<ExitCode> {
             eprintln!("noted: HTTP {}, serving the stale copy", response.status);
             serve(&entry, "stale", now, args)
         }
+        Err(err) if is_too_large(&err) => Err(err),
         Err(err) => {
             eprintln!("noted: {err:#}, serving the stale copy");
             serve(&entry, "stale", now, args)
@@ -81,6 +82,13 @@ pub fn run(store: &Store, args: &GetArgs) -> Result<ExitCode> {
 
 fn is_success(status: u16) -> bool {
     (200..300).contains(&status)
+}
+
+fn is_too_large(err: &anyhow::Error) -> bool {
+    matches!(
+        err.downcast_ref::<ureq::Error>(),
+        Some(ureq::Error::BodyExceedsLimit(_))
+    )
 }
 
 fn store_response(

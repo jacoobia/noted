@@ -16,7 +16,7 @@ noted get https://oldschool.runescape.wiki/w/Abyssal_whip --ttl 7d
 
 The first call fetches and stores the page. Calls after that come from the cache until the TTL runs out. Without `--ttl`, a new entry gets 1 day and an existing one keeps the TTL it was stored with.
 
-Once an entry goes stale, noted asks the server whether it changed (ETag / Last-Modified). A `304` just resets the clock, so an expired page costs a tiny request instead of a full download. `--ttl 0s` checks every time, and `--refresh` skips the cache for one call. If the server is down, returns a 5xx, or takes longer than 30s (`NOTED_TIMEOUT` changes that), I get the stale copy with a warning. Other errors (404 and so on) aren't cached and exit 1.
+Once an entry goes stale, noted asks the server whether it changed (ETag / Last-Modified). A `304` just resets the clock, so an expired page costs a tiny request instead of a full download. `--ttl 0s` checks every time, and `--refresh` rechecks with the server even when the entry is still fresh. If the server is down, returns a 5xx, or takes longer than 30s (`NOTED_TIMEOUT` changes that), I get the stale copy with a warning. Other errors (404 and so on) aren't cached and exit 1.
 
 The body goes to stdout. A status line goes to stderr, e.g. `noted: hit · age 3h · ttl 7d · 200 text/html`. `-q` hides it.
 

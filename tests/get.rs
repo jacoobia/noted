@@ -3,7 +3,7 @@ mod common;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use common::{Handler, Reply, Seen, TestServer, always, noted};
+use common::{Handler, Reply, Seen, TestServer, always, answer_once_then_reset, noted};
 use predicates::prelude::*;
 use tempfile::TempDir;
 
@@ -178,11 +178,42 @@ fn stale_with_etag_revalidates_304() {
         .success()
         .stdout("etag body")
         .stderr(predicate::str::contains("noted: revalidated"));
-    assert_eq!(server.hits("/e"), 2);
     assert_eq!(
         server.last_header("/e", "If-None-Match").as_deref(),
         Some("\"v1\"")
     );
+}
+
+#[test]
+fn revalidation_persists_new_ttl() {
+    let server = TestServer::start(vec![(
+        "/e",
+        Box::new(|seen: &Seen| {
+            if seen.header("If-None-Match").is_some() {
+                Reply::status(304)
+            } else {
+                Reply::ok("text/plain", "etag body").header("ETag", "\"v1\"")
+            }
+        }),
+    )]);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    let url = server.url("/e");
+    noted(&db)
+        .args(["get", "--ttl", "0s", &url])
+        .assert()
+        .success();
+    noted(&db)
+        .args(["get", "--refresh", "--ttl", "1d", &url])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("noted: revalidated"));
+    noted(&db)
+        .args(["get", &url])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("noted: hit"));
+    assert_eq!(server.hits("/e"), 2);
 }
 
 #[test]
@@ -271,19 +302,38 @@ fn explicit_ttl_overwrites_stored() {
 fn server_down_serves_stale() {
     let dir = TempDir::new().unwrap();
     let db = dir.path().join("c.db");
-    let server = page_server();
-    let url = server.url("/page");
+    let url = answer_once_then_reset("hello page");
     noted(&db)
         .args(["get", "--ttl", "0s", &url])
         .assert()
         .success();
-    server.stop();
     noted(&db)
         .args(["get", &url])
         .assert()
         .success()
         .stdout("hello page")
         .stderr(predicate::str::contains("noted: stale"));
+}
+
+#[test]
+fn offline_ttl_is_still_saved() {
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    let url = answer_once_then_reset("hello page");
+    noted(&db)
+        .args(["get", "--ttl", "0s", &url])
+        .assert()
+        .success();
+    noted(&db)
+        .args(["get", "--refresh", "--ttl", "7d", &url])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("noted: stale"));
+    noted(&db)
+        .args(["get", &url])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("noted: hit").and(predicate::str::contains("ttl 7d")));
 }
 
 #[test]
@@ -364,4 +414,49 @@ fn bad_url_creates_no_database() {
         .failure()
         .stderr(predicate::str::contains("only http and https"));
     assert!(!db.exists());
+}
+
+#[test]
+fn client_error_on_stale_entry_is_reported() {
+    let server = TestServer::start(vec![(
+        "/later-gone",
+        counting(|n| {
+            if n == 1 {
+                Reply::ok("text/plain", "was here")
+            } else {
+                Reply::status(404).body("missing")
+            }
+        }),
+    )]);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    let args = ["get", "--ttl", "0s", &server.url("/later-gone")];
+    noted(&db).args(args).assert().success();
+    noted(&db)
+        .args(args)
+        .assert()
+        .code(1)
+        .stdout("missing")
+        .stderr(predicate::str::contains("noted: HTTP 404"));
+}
+
+#[test]
+fn oversized_body_is_an_error_even_when_stale() {
+    let server = TestServer::start(vec![(
+        "/big",
+        counting(|n| {
+            let size = if n == 1 { 10 } else { 21 * 1024 * 1024 };
+            Reply::ok("application/octet-stream", vec![b'x'; size])
+        }),
+    )]);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    let args = ["get", "--ttl", "0s", &server.url("/big")];
+    noted(&db).args(args).assert().success();
+    noted(&db)
+        .args(args)
+        .assert()
+        .failure()
+        .stdout("")
+        .stderr(predicate::str::contains("limit"));
 }
