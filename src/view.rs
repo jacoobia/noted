@@ -1,4 +1,5 @@
 use ego_tree::NodeId;
+use scraper::node::Text;
 use scraper::{Html, Node, Selector};
 
 const CONTENT_ROOTS: [&str; 4] = [".mw-parser-output", "main", "article", "body"];
@@ -38,15 +39,29 @@ fn detach(document: &mut Html, ids: Vec<NodeId>) {
 }
 
 fn tidy_links(document: &mut Html) {
-    let (empty, labelled): (Vec<_>, Vec<_>) = document
+    let links: Vec<_> = document
         .select(&selector("a"))
-        .partition(|link| link.text().all(|text| text.trim().is_empty()));
-    let labelled: Vec<_> = labelled.into_iter().map(|link| link.id()).collect();
-    detach(document, empty.into_iter().map(|link| link.id()).collect());
-    for id in labelled {
-        if let Some(mut node) = document.tree.get_mut(id)
-            && let Node::Element(element) = node.value()
-        {
+        .map(|link| {
+            let has_text = link.text().any(|text| !text.trim().is_empty());
+            let title = link.value().attr("title").map(str::trim).map(str::to_owned);
+            (link.id(), has_text, title.filter(|title| !title.is_empty()))
+        })
+        .collect();
+    for (id, has_text, title) in links {
+        let Some(mut node) = document.tree.get_mut(id) else {
+            continue;
+        };
+        match (has_text, title) {
+            (true, _) => {}
+            (false, Some(title)) => {
+                node.append(Node::Text(Text { text: title.into() }));
+            }
+            (false, None) => {
+                node.detach();
+                continue;
+            }
+        }
+        if let Node::Element(element) = node.value() {
             element.attrs = std::mem::take(&mut element.attrs)
                 .into_iter()
                 .filter(|(name, _)| &*name.local != "title")
@@ -60,10 +75,8 @@ fn tidy_links(document: &mut Html) {
 fn demote_row_headers(document: &mut Html) {
     let mut row_headers = Vec::new();
     for table in document.select(&selector("table")) {
-        for (index, row) in table.select(&selector("tr")).enumerate() {
-            if index > 0 || row.select(&selector("td")).next().is_some() {
-                row_headers.extend(row.select(&selector("th")).map(|cell| cell.id()));
-            }
+        for row in table.select(&selector("tr")).skip(1) {
+            row_headers.extend(row.select(&selector("th")).map(|cell| cell.id()));
         }
     }
     for id in row_headers {
@@ -197,9 +210,29 @@ mod tests {
     }
 
     #[test]
+    fn keeps_header_row_that_mixes_cell_types() {
+        let md = html_to_markdown(
+            "<body><table><tr><th colspan=\"2\">Attack bonuses</th><td>img</td></tr>\
+             <tr><th>Stab</th><th>Slash</th></tr>\
+             <tr><td>+0</td><td>+82</td></tr></table></body>",
+        );
+        assert!(md.starts_with("| Attack bonuses |"), "{md}");
+        assert!(md.contains("| Stab | Slash |"), "{md}");
+        assert!(md.contains("| +0 | +82 |"), "{md}");
+    }
+
+    #[test]
+    fn icon_links_become_their_title() {
+        let md = html_to_markdown(
+            "<body><p><a href=\"/w/Stab\" title=\"Stab\"><img src=\"/s.png\"></a></p></body>",
+        );
+        assert_eq!(md, "[Stab](/w/Stab)");
+    }
+
+    #[test]
     fn strips_link_titles_and_empty_links() {
         let md = html_to_markdown(
-            "<body><p><a href=\"/w/Icon\" title=\"Icon\"><img src=\"/i.png\"></a>\
+            "<body><p><a href=\"/w/File:Icon.png\"><img src=\"/i.png\"></a>\
              <a href=\"/w/Members\" title=\"Members\">Members</a></p></body>",
         );
         assert_eq!(md, "[Members](/w/Members)");
