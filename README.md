@@ -18,6 +18,8 @@ The first call fetches and stores the page. Calls after that come from the cache
 
 Once an entry goes stale, noted asks the server whether it changed (ETag / Last-Modified). A `304` just resets the clock, so an expired page costs a tiny request instead of a full download. `--ttl 0s` checks every time, and `--refresh` rechecks with the server even when the entry is still fresh. If the server is down, returns a 5xx, or takes longer than 30s (`NOTED_TIMEOUT` changes that), I get the stale copy with a warning. Other errors (404 and so on) aren't cached and exit 1.
 
+HTML comes back as markdown. noted keeps the article body (`.mw-parser-output` on wikis, else `main`, `article` or `body`), drops scripts, nav, images, the table of contents and navboxes, and squashes table padding. The whip page goes from 98KB of raw conversion to 15KB. `--raw` gives the original HTML. Other content types come back byte for byte.
+
 The body goes to stdout. A status line goes to stderr, e.g. `noted: hit · age 3h · ttl 7d · 200 text/html`. `-q` hides it.
 
 The cache lives in my OS cache dir (`%LOCALAPPDATA%\noted\cache.db` on Windows). Set `NOTED_DB` to use another file. Set `NOTED_CONTACT` to add contact details to the User-Agent, which the OSRS Wiki asks for.

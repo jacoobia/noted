@@ -7,6 +7,7 @@ use url::Url;
 
 use crate::cache::{Entry, Store, now};
 use crate::fetch::{Response, fetch};
+use crate::view::{html_to_markdown, is_html};
 
 const DEFAULT_TTL_SECS: i64 = 24 * 60 * 60;
 
@@ -129,7 +130,12 @@ fn serve(entry: &Entry, state: &str, now: i64, args: &GetArgs) -> Result<ExitCod
             entry.content_type.as_deref().unwrap_or("-"),
         );
     }
-    std::io::stdout().write_all(&entry.body)?;
+    if !args.raw && is_html(entry.content_type.as_deref()) {
+        let markdown = html_to_markdown(&String::from_utf8_lossy(&entry.body));
+        println!("{markdown}");
+    } else {
+        std::io::stdout().write_all(&entry.body)?;
+    }
     Ok(ExitCode::SUCCESS)
 }
 
