@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -116,7 +116,7 @@ fn store_response(
 
 fn http_error(status: u16, body: &[u8]) -> Result<ExitCode> {
     eprintln!("noted: HTTP {status}");
-    std::io::stdout().write_all(body)?;
+    emit(body)?;
     Ok(ExitCode::FAILURE)
 }
 
@@ -147,7 +147,7 @@ fn serve(entry: &Entry, state: &str, now: i64, args: &GetArgs) -> Result<ExitCod
         };
         return match section(&text, heading) {
             Ok(part) => {
-                println!("{part}");
+                emit(format!("{part}\n").as_bytes())?;
                 Ok(ExitCode::SUCCESS)
             }
             Err(headings) => {
@@ -161,14 +161,20 @@ fn serve(entry: &Entry, state: &str, now: i64, args: &GetArgs) -> Result<ExitCod
         };
     }
     if html && !args.raw {
-        println!(
-            "{}",
-            html_to_markdown(&String::from_utf8_lossy(&entry.body))
-        );
+        let markdown = html_to_markdown(&String::from_utf8_lossy(&entry.body));
+        emit(format!("{markdown}\n").as_bytes())?;
     } else {
-        std::io::stdout().write_all(&entry.body)?;
+        emit(&entry.body)?;
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn emit(bytes: &[u8]) -> Result<()> {
+    let mut stdout = std::io::stdout().lock();
+    match stdout.write_all(bytes).and_then(|()| stdout.flush()) {
+        Err(err) if err.kind() == ErrorKind::BrokenPipe => Ok(()),
+        result => Ok(result?),
+    }
 }
 
 pub fn short_duration(secs: i64) -> String {

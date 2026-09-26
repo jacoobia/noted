@@ -87,3 +87,26 @@ fn section_rejects_binary_content() {
         .code(1)
         .stderr(predicate::str::contains("--section"));
 }
+
+#[test]
+fn closed_stdout_is_not_a_crash() {
+    let dir = TempDir::new().unwrap();
+    let server = wiki_server();
+    let db = dir.path().join("c.db");
+    noted(&db)
+        .args(["get", "-q", &server.url("/w/Abyssal_demon")])
+        .assert()
+        .success();
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_noted"))
+        .env("NOTED_DB", &db)
+        .args(["get", "-q", &server.url("/w/Abyssal_demon")])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdout.take());
+    let out = child.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_ne!(out.status.code(), Some(101), "{stderr}");
+    assert!(!stderr.contains("panicked"), "{stderr}");
+}
