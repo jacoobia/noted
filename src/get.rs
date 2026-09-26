@@ -7,7 +7,7 @@ use url::Url;
 
 use crate::cache::{Entry, Store, now};
 use crate::fetch::{Response, fetch};
-use crate::view::{html_to_markdown, is_html};
+use crate::view::{html_to_markdown, is_html, section};
 
 const DEFAULT_TTL_SECS: i64 = 24 * 60 * 60;
 
@@ -130,9 +130,41 @@ fn serve(entry: &Entry, state: &str, now: i64, args: &GetArgs) -> Result<ExitCod
             entry.content_type.as_deref().unwrap_or("-"),
         );
     }
-    if !args.raw && is_html(entry.content_type.as_deref()) {
-        let markdown = html_to_markdown(&String::from_utf8_lossy(&entry.body));
-        println!("{markdown}");
+    let content_type = entry.content_type.as_deref();
+    let html = is_html(content_type);
+    if let Some(heading) = &args.section {
+        if !html && !content_type.is_some_and(|ct| ct.starts_with("text/")) {
+            bail!(
+                "--section needs an HTML or text response, got {}",
+                content_type.unwrap_or("no content type")
+            );
+        }
+        let text = String::from_utf8_lossy(&entry.body);
+        let text = if html {
+            html_to_markdown(&text)
+        } else {
+            text.into_owned()
+        };
+        return match section(&text, heading) {
+            Ok(part) => {
+                println!("{part}");
+                Ok(ExitCode::SUCCESS)
+            }
+            Err(headings) => {
+                eprintln!(
+                    "noted: no section \"{}\". Headings: {}",
+                    heading.trim(),
+                    headings.join(", ")
+                );
+                Ok(ExitCode::FAILURE)
+            }
+        };
+    }
+    if html && !args.raw {
+        println!(
+            "{}",
+            html_to_markdown(&String::from_utf8_lossy(&entry.body))
+        );
     } else {
         std::io::stdout().write_all(&entry.body)?;
     }

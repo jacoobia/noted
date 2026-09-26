@@ -136,6 +136,57 @@ fn is_rule(cell: &str) -> bool {
     !cell.is_empty() && cell.chars().all(|ch| ch == '-')
 }
 
+struct Heading<'a> {
+    line: usize,
+    level: usize,
+    title: &'a str,
+}
+
+pub fn section(text: &str, heading: &str) -> Result<String, Vec<String>> {
+    let lines: Vec<&str> = text.lines().collect();
+    let headings = headings(&lines);
+    let wanted = heading.trim();
+    let Some(index) = headings
+        .iter()
+        .position(|h| h.title.eq_ignore_ascii_case(wanted))
+    else {
+        return Err(headings.iter().map(|h| h.title.to_owned()).collect());
+    };
+    let start = &headings[index];
+    let end = headings[index + 1..]
+        .iter()
+        .find(|h| h.level <= start.level)
+        .map_or(lines.len(), |h| h.line);
+    Ok(lines[start.line..end].join("\n").trim_end().to_owned())
+}
+
+fn headings<'a>(lines: &[&'a str]) -> Vec<Heading<'a>> {
+    let mut in_fence = false;
+    let mut found = Vec::new();
+    for (line, text) in lines.iter().enumerate() {
+        if is_fence(text) {
+            in_fence = !in_fence;
+        } else if !in_fence && let Some((level, title)) = parse_heading(text) {
+            found.push(Heading { line, level, title });
+        }
+    }
+    found
+}
+
+fn parse_heading(line: &str) -> Option<(usize, &str)> {
+    let level = line.bytes().take_while(|&b| b == b'#').count();
+    let rest = &line[level..];
+    if !(1..=6).contains(&level) || !(rest.is_empty() || rest.starts_with(' ')) {
+        return None;
+    }
+    Some((level, rest.trim().trim_end_matches('#').trim_end()))
+}
+
+fn is_fence(line: &str) -> bool {
+    let line = line.trim_start();
+    line.starts_with("```") || line.starts_with("~~~")
+}
+
 fn selector(css: &str) -> Selector {
     Selector::parse(css).expect("selectors are compile-time constants")
 }
@@ -246,6 +297,41 @@ mod tests {
              <table class=\"navbox\"><tr><td>Everything else</td></tr></table></div>",
         );
         assert_eq!(md, "text");
+    }
+
+    const OUTLINE: &str = "# A\nx\n## B\ny\n### C\nz\n## D\nw";
+
+    #[test]
+    fn section_until_same_level() {
+        assert_eq!(section(OUTLINE, "b").unwrap(), "## B\ny\n### C\nz");
+    }
+
+    #[test]
+    fn section_last_runs_to_end() {
+        assert_eq!(section(OUTLINE, "D").unwrap(), "## D\nw");
+    }
+
+    #[test]
+    fn section_case_insensitive_trimmed() {
+        assert_eq!(
+            section("## Drops\nash", "  drops ").unwrap(),
+            "## Drops\nash"
+        );
+    }
+
+    #[test]
+    fn section_ignores_hash_in_code_fence() {
+        let text = "## Setup\n```sh\n# comment\n```\nafter\n## Next\nn";
+        assert_eq!(
+            section(text, "setup").unwrap(),
+            "## Setup\n```sh\n# comment\n```\nafter"
+        );
+        assert!(section(text, "comment").is_err());
+    }
+
+    #[test]
+    fn section_missing_lists_headings() {
+        assert_eq!(section(OUTLINE, "nope").unwrap_err(), ["A", "B", "C", "D"]);
     }
 
     #[test]

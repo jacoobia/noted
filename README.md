@@ -20,6 +20,14 @@ Once an entry goes stale, noted asks the server whether it changed (ETag / Last-
 
 HTML comes back as markdown. noted keeps the article body (`.mw-parser-output` on wikis, else `main`, `article` or `body`), drops scripts, nav, images, the table of contents and navboxes, and squashes table padding. The whip page goes from 98KB of raw conversion to 15KB. `--raw` gives the original HTML. Other content types come back byte for byte.
 
+To read one part of a page:
+
+```
+noted get https://oldschool.runescape.wiki/w/Abyssal_demon --section Drops
+```
+
+That prints the heading and everything under it, up to the next heading at the same level or higher. The match ignores case. If nothing matches, it exits 1 and lists the headings it found. It works on HTML (after the markdown conversion) and on plain text.
+
 The body goes to stdout. A status line goes to stderr, e.g. `noted: hit · age 3h · ttl 7d · 200 text/html`. `-q` hides it.
 
 The cache lives in my OS cache dir (`%LOCALAPPDATA%\noted\cache.db` on Windows). Set `NOTED_DB` to use another file. Set `NOTED_CONTACT` to add contact details to the User-Agent, which the OSRS Wiki asks for.
