@@ -2,7 +2,13 @@ use ego_tree::NodeId;
 use scraper::node::Text;
 use scraper::{Html, Node, Selector};
 
-const CONTENT_ROOTS: [&str; 4] = [".mw-parser-output", "main", "article", "body"];
+const CONTENT_ROOTS: [&str; 5] = [
+    "#mw-content-text > .mw-parser-output",
+    ".mw-parser-output",
+    "main",
+    "article",
+    "body",
+];
 const NOISE: &str =
     "script, style, nav, footer, noscript, img, .mw-editsection, #toc, .toc, .navbox";
 
@@ -21,7 +27,7 @@ pub fn html_to_markdown(html: &str) -> String {
     let noise: Vec<_> = document.select(&selector(NOISE)).map(|e| e.id()).collect();
     detach(&mut document, noise);
     tidy_links(&mut document);
-    demote_row_headers(&mut document);
+    normalise_table_cells(&mut document);
     let content = CONTENT_ROOTS
         .iter()
         .find_map(|root| document.select(&selector(root)).next())
@@ -70,20 +76,22 @@ fn tidy_links(document: &mut Html) {
     }
 }
 
-/// htmd only reads `td` cells below a table's header row, so a `th` used as a row label
-/// would vanish along with its row.
-fn demote_row_headers(document: &mut Html) {
-    let mut row_headers = Vec::new();
+/// htmd builds the header from the first row's `th` cells and reads only `td` cells after it,
+/// so any other mix of cell types loses data.
+fn normalise_table_cells(document: &mut Html) {
+    let (rows, th, td) = (selector("tr"), selector("th"), selector("td"));
+    let mut renames = Vec::new();
     for table in document.select(&selector("table")) {
-        for row in table.select(&selector("tr")).skip(1) {
-            row_headers.extend(row.select(&selector("th")).map(|cell| cell.id()));
+        for (index, row) in table.select(&rows).enumerate() {
+            let (from, to) = if index == 0 { (&td, "th") } else { (&th, "td") };
+            renames.extend(row.select(from).map(|cell| (cell.id(), to)));
         }
     }
-    for id in row_headers {
+    for (id, tag) in renames {
         if let Some(mut node) = document.tree.get_mut(id)
             && let Node::Element(element) = node.value()
         {
-            element.name.local = "td".into();
+            element.name.local = tag.into();
         }
     }
 }
@@ -115,21 +123,7 @@ fn compact_tables(markdown: &str) -> String {
 fn split_cells(row: &str) -> Vec<&str> {
     let inner = row.trim().strip_prefix('|').unwrap_or(row);
     let inner = inner.strip_suffix('|').unwrap_or(inner);
-    let mut cells = Vec::new();
-    let mut start = 0;
-    let mut escaped = false;
-    for (i, ch) in inner.char_indices() {
-        match ch {
-            '\\' => escaped = !escaped,
-            '|' if !escaped => {
-                cells.push(&inner[start..i]);
-                start = i + 1;
-            }
-            _ => escaped = false,
-        }
-    }
-    cells.push(&inner[start..]);
-    cells
+    inner.split('|').collect()
 }
 
 fn is_rule(cell: &str) -> bool {
@@ -198,11 +192,31 @@ mod tests {
     const WIKI: &str = include_str!("../tests/fixtures/wiki.html");
 
     #[test]
-    fn picks_mw_parser_output() {
+    fn picks_article_parser_output() {
         let md = html_to_markdown(WIKI);
-        assert!(md.contains("Abyssal demons are demons"), "{md}");
-        assert!(!md.contains("Random page"), "{md}");
-        assert!(!md.contains("CC BY-NC-SA"), "{md}");
+        assert!(md.starts_with("Abyssal demons are demons"), "{md}");
+        assert!(!md.contains("From the Old School"), "{md}");
+        assert!(!md.contains("Protected"), "{md}");
+    }
+
+    #[test]
+    fn first_row_label_value_pairs_survive() {
+        let md = html_to_markdown(
+            "<body><table><tr><th>Members</th><td>Yes</td></tr>\
+             <tr><th>Weight</th><td>0.453 kg</td></tr></table></body>",
+        );
+        assert!(md.contains("| Members | Yes |"), "{md}");
+        assert!(md.contains("| Weight | 0.453 kg |"), "{md}");
+    }
+
+    #[test]
+    fn compaction_skips_code_and_drops_empty_rows() {
+        let md = html_to_markdown(
+            "<body><pre><code>|  keep   spacing  |</code></pre>\
+             <table><tr><th>A</th></tr><tr><td></td></tr><tr><td>1</td></tr></table></body>",
+        );
+        assert!(md.contains("|  keep   spacing  |"), "{md}");
+        assert!(md.ends_with("| A |\n| --- |\n| 1 |"), "{md}");
     }
 
     #[test]
