@@ -1,4 +1,3 @@
-use std::io::{ErrorKind, Write};
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -7,6 +6,7 @@ use url::Url;
 
 use crate::cache::{Entry, Store, now};
 use crate::fetch::{Response, fetch};
+use crate::output::{emit, short_duration};
 use crate::view::{html_to_markdown, is_html, section};
 
 const DEFAULT_TTL_SECS: i64 = 24 * 60 * 60;
@@ -167,20 +167,4 @@ fn serve(entry: &Entry, state: &str, now: i64, args: &GetArgs) -> Result<ExitCod
         emit(&entry.body)?;
     }
     Ok(ExitCode::SUCCESS)
-}
-
-fn emit(bytes: &[u8]) -> Result<()> {
-    let mut stdout = std::io::stdout().lock();
-    match stdout.write_all(bytes).and_then(|()| stdout.flush()) {
-        Err(err) if err.kind() == ErrorKind::BrokenPipe => Ok(()),
-        result => Ok(result?),
-    }
-}
-
-pub fn short_duration(secs: i64) -> String {
-    const UNITS: [(i64, &str); 4] = [(86_400, "d"), (3_600, "h"), (60, "m"), (1, "s")];
-    UNITS.iter().find(|(size, _)| secs >= *size).map_or_else(
-        || "0s".to_owned(),
-        |(size, unit)| format!("{}{unit}", secs / size),
-    )
 }
