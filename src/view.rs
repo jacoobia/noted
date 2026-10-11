@@ -139,10 +139,10 @@ struct Heading<'a> {
 pub fn section(text: &str, heading: &str) -> Result<String, Vec<String>> {
     let lines: Vec<&str> = text.lines().collect();
     let headings = headings(&lines);
-    let wanted = heading.trim();
+    let wanted = heading.trim().to_lowercase();
     let Some(index) = headings
         .iter()
-        .position(|h| h.title.eq_ignore_ascii_case(wanted))
+        .position(|h| h.title.to_lowercase() == wanted)
     else {
         return Err(headings.iter().map(|h| h.title.to_owned()).collect());
     };
@@ -173,7 +173,13 @@ fn parse_heading(line: &str) -> Option<(usize, &str)> {
     if !(1..=6).contains(&level) || !(rest.is_empty() || rest.starts_with(' ')) {
         return None;
     }
-    Some((level, rest.trim().trim_end_matches('#').trim_end()))
+    let title = rest.trim();
+    let unclosed = title.trim_end_matches('#');
+    if unclosed.is_empty() || unclosed.ends_with(' ') {
+        Some((level, unclosed.trim_end()))
+    } else {
+        Some((level, title))
+    }
 }
 
 fn is_fence(line: &str) -> bool {
@@ -284,6 +290,7 @@ mod tests {
         assert!(md.starts_with("| Attack bonuses |"), "{md}");
         assert!(md.contains("| Stab | Slash |"), "{md}");
         assert!(md.contains("| +0 | +82 |"), "{md}");
+        assert!(md.lines().next().unwrap().contains("img"), "{md}");
     }
 
     #[test]
@@ -341,6 +348,17 @@ mod tests {
             "## Setup\n```sh\n# comment\n```\nafter"
         );
         assert!(section(text, "comment").is_err());
+    }
+
+    #[test]
+    fn section_keeps_hash_inside_title() {
+        let text = "## C#\nsharp\n## Drops ##\nash\n#hashtag\n## Über\nu";
+        assert_eq!(section(text, "c#").unwrap(), "## C#\nsharp");
+        assert_eq!(
+            section(text, "drops").unwrap(),
+            "## Drops ##\nash\n#hashtag"
+        );
+        assert_eq!(section(text, "über").unwrap(), "## Über\nu");
     }
 
     #[test]

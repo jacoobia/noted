@@ -29,7 +29,7 @@ enum Command {
         #[arg(long)]
         raw: bool,
         /// Print only the section under this heading
-        #[arg(long)]
+        #[arg(long, value_parser = non_blank)]
         section: Option<String>,
         /// Skip the status line on stderr
         #[arg(long, short)]
@@ -94,5 +94,14 @@ fn run(command: Command) -> Result<ExitCode> {
             manage::stats(&Store::open(&path)?, &path).map(|()| ExitCode::SUCCESS)
         }
         Command::Hook => bail!("not implemented"),
+    }
+}
+
+fn non_blank(value: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        Err("must not be blank".to_owned())
+    } else {
+        Ok(trimmed.to_owned())
     }
 }

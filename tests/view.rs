@@ -89,17 +89,16 @@ fn section_rejects_binary_content() {
 }
 
 #[test]
-fn closed_stdout_is_not_a_crash() {
+fn closed_stdout_exits_quietly() {
+    let server = TestServer::start(vec![(
+        "/big",
+        always(|| Reply::ok("text/plain", "x".repeat(1 << 20))),
+    )]);
     let dir = TempDir::new().unwrap();
-    let server = wiki_server();
     let db = dir.path().join("c.db");
-    noted(&db)
-        .args(["get", "-q", &server.url("/w/Abyssal_demon")])
-        .assert()
-        .success();
     let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_noted"))
         .env("NOTED_DB", &db)
-        .args(["get", "-q", &server.url("/w/Abyssal_demon")])
+        .args(["get", "-q", &server.url("/big")])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -107,6 +106,61 @@ fn closed_stdout_is_not_a_crash() {
     drop(child.stdout.take());
     let out = child.wait_with_output().unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert_ne!(out.status.code(), Some(101), "{stderr}");
-    assert!(!stderr.contains("panicked"), "{stderr}");
+    assert!(out.status.success(), "{stderr}");
+    assert!(stderr.is_empty(), "{stderr}");
+}
+
+#[test]
+fn empty_section_is_rejected() {
+    let dir = TempDir::new().unwrap();
+    noted(&dir.path().join("c.db"))
+        .args(["get", "--section", " ", "https://a.io/"])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn section_works_on_plain_text() {
+    let server = TestServer::start(vec![(
+        "/notes.md",
+        always(|| {
+            Reply::ok(
+                "text/markdown",
+                "# Notes
+## Keep
+yes
+## Skip
+no
+",
+            )
+        }),
+    )]);
+    let dir = TempDir::new().unwrap();
+    noted(&dir.path().join("c.db"))
+        .args(["get", "-q", "--section", "keep", &server.url("/notes.md")])
+        .assert()
+        .success()
+        .stdout(
+            "## Keep
+yes
+",
+        );
+}
+
+#[test]
+fn section_with_raw_still_reads_markdown() {
+    let dir = TempDir::new().unwrap();
+    let server = wiki_server();
+    noted(&dir.path().join("c.db"))
+        .args([
+            "get",
+            "-q",
+            "--raw",
+            "--section",
+            "trivia",
+            &server.url("/w/Abyssal_demon"),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::starts_with("## Trivia"));
 }

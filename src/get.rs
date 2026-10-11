@@ -133,7 +133,12 @@ fn serve(entry: &Entry, state: &str, now: i64, args: &GetArgs) -> Result<ExitCod
     let content_type = entry.content_type.as_deref();
     let html = is_html(content_type);
     if let Some(heading) = &args.section {
-        if !html && !content_type.is_some_and(|ct| ct.starts_with("text/")) {
+        if !html
+            && !content_type.is_some_and(|ct| {
+                ct.get(..5)
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case("text/"))
+            })
+        {
             bail!(
                 "--section needs an HTML or text response, got {}",
                 content_type.unwrap_or("no content type")

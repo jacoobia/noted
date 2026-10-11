@@ -26,7 +26,7 @@ To read one part of a page:
 noted get https://oldschool.runescape.wiki/w/Abyssal_demon --section Drops
 ```
 
-That prints the heading and everything under it, up to the next heading at the same level or higher. The match ignores case. If nothing matches, it exits 1 and lists the headings it found. It works on HTML (after the markdown conversion) and on plain text.
+That prints the heading and everything under it, up to the next heading at the same level or higher. The match ignores case, and the first matching heading wins. If nothing matches, it exits 1 and lists the headings it found. It works on HTML (after the markdown conversion) and on any other text response.
 
 The body goes to stdout. A status line goes to stderr, e.g. `noted: hit · age 3h · ttl 7d · 200 text/html`. `-q` hides it.
 
