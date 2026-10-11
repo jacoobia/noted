@@ -2,9 +2,10 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
-use clap::{Parser, Subcommand};
+use clap::{ArgGroup, Parser, Subcommand};
 use noted::cache::{Store, db_path};
 use noted::get::{self, GetArgs};
+use noted::manage;
 
 #[derive(Parser)]
 #[command(version, about = "Fetch URLs through a local cache")]
@@ -37,6 +38,7 @@ enum Command {
     /// List cached entries
     Ls,
     /// Remove cached entries
+    #[command(group(ArgGroup::new("target").required(true).args(["urls", "stale", "all"])))]
     Rm {
         urls: Vec<String>,
         /// Remove every stale entry
@@ -83,8 +85,14 @@ fn run(command: Command) -> Result<ExitCode> {
                 },
             )
         }
-        Command::Ls | Command::Rm { .. } | Command::Stats | Command::Hook => {
-            bail!("not implemented")
+        Command::Ls => manage::ls(&Store::open(&db_path())?).map(|()| ExitCode::SUCCESS),
+        Command::Rm { urls, stale, all } => {
+            manage::rm(&Store::open(&db_path())?, &urls, stale, all).map(|()| ExitCode::SUCCESS)
         }
+        Command::Stats => {
+            let path = db_path();
+            manage::stats(&Store::open(&path)?, &path).map(|()| ExitCode::SUCCESS)
+        }
+        Command::Hook => bail!("not implemented"),
     }
 }

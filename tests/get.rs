@@ -149,6 +149,14 @@ fn concurrent_processes_succeed() {
         assert!(out.status.success(), "{stderr}");
         assert!(!stderr.contains("locked"), "{stderr}");
     }
+    let listing = noted(&db)
+        .arg("ls")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(String::from_utf8(listing).unwrap().lines().count(), 8);
 }
 
 fn counting(reply: impl Fn(usize) -> Reply + Send + Sync + 'static) -> Handler {

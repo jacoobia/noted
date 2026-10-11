@@ -131,7 +131,7 @@ impl Store {
     pub fn list(&self) -> Result<Vec<Listing>> {
         let mut stmt = self.conn.prepare(
             "SELECT url, fetched_at, ttl_secs, length(body), hits
-             FROM entries ORDER BY fetched_at DESC, url",
+             FROM entries ORDER BY fetched_at DESC, rowid DESC",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(Listing {

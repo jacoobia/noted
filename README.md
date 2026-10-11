@@ -32,6 +32,16 @@ The body goes to stdout. A status line goes to stderr, e.g. `noted: hit · age 3
 
 The cache lives in my OS cache dir (`%LOCALAPPDATA%\noted\cache.db` on Windows). Set `NOTED_DB` to use another file. Set `NOTED_CONTACT` to add contact details to the User-Agent, which the OSRS Wiki asks for.
 
+## Looking after the cache
+
+```
+noted ls                 # age, ttl, fresh/stale, size, hits, url (newest first)
+noted rm <url>...        # drop specific entries
+noted rm --stale         # drop everything past its TTL
+noted rm --all
+noted stats              # totals and the DB path
+```
+
 ## After cloning
 
 ```
