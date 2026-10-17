@@ -35,7 +35,7 @@ pub struct Entry {
 
 impl Entry {
     pub fn is_fresh(&self, now: i64) -> bool {
-        now < self.fetched_at.saturating_add(self.ttl_secs)
+        is_fresh(self.fetched_at, self.ttl_secs, now)
     }
 
     fn from_row(row: &Row) -> rusqlite::Result<Self> {
@@ -64,7 +64,7 @@ pub struct Listing {
 
 impl Listing {
     pub fn is_fresh(&self, now: i64) -> bool {
-        now < self.fetched_at.saturating_add(self.ttl_secs)
+        is_fresh(self.fetched_at, self.ttl_secs, now)
     }
 }
 
@@ -162,6 +162,10 @@ impl Store {
     pub fn clear(&self) -> Result<usize> {
         Ok(self.conn.execute("DELETE FROM entries", [])?)
     }
+}
+
+fn is_fresh(fetched_at: i64, ttl_secs: i64, now: i64) -> bool {
+    now < fetched_at.saturating_add(ttl_secs)
 }
 
 pub fn db_path() -> PathBuf {
@@ -317,5 +321,13 @@ mod tests {
         let urls: Vec<_> = listed.iter().map(|l| l.url.as_str()).collect();
         assert_eq!(urls, ["https://new.io/", "https://old.io/"]);
         assert_eq!(listed[0].size, 3);
+    }
+
+    #[test]
+    fn list_breaks_ties_by_latest_write() {
+        let (_dir, store) = store();
+        store.put(&entry("https://first.io/", 100)).unwrap();
+        store.put(&entry("https://second.io/", 100)).unwrap();
+        assert_eq!(store.list().unwrap()[0].url, "https://second.io/");
     }
 }

@@ -25,3 +25,36 @@ pub fn short_size(bytes: i64) -> String {
         |(size, unit)| format!("{}{unit}", bytes / size),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sizes_truncate_to_the_largest_unit() {
+        let cases = [
+            (0, "0B"),
+            (1023, "1023B"),
+            (1024, "1KB"),
+            ((1 << 20) - 1, "1023KB"),
+            (1 << 20, "1MB"),
+        ];
+        for (bytes, expected) in cases {
+            assert_eq!(short_size(bytes), expected, "{bytes}");
+        }
+    }
+
+    #[test]
+    fn durations_truncate_to_the_largest_unit() {
+        let cases = [
+            (-5, "0s"),
+            (0, "0s"),
+            (59, "59s"),
+            (90 * 60, "1h"),
+            (7 * 86_400, "7d"),
+        ];
+        for (secs, expected) in cases {
+            assert_eq!(short_duration(secs), expected, "{secs}");
+        }
+    }
+}

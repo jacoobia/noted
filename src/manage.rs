@@ -35,9 +35,13 @@ pub fn rm(store: &Store, urls: &[String], stale: bool, all: bool) -> Result<()> 
     } else if stale {
         store.remove_stale(now())?
     } else {
+        let keys = urls
+            .iter()
+            .map(|url| cache_key(url))
+            .collect::<Result<Vec<_>>>()?;
         let mut removed = 0;
-        for url in urls {
-            removed += usize::from(store.remove(&cache_key(url)?)?);
+        for key in &keys {
+            removed += usize::from(store.remove(key)?);
         }
         removed
     };

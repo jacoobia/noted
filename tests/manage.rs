@@ -35,12 +35,13 @@ fn ls_shows_entries_newest_first() {
     let listing = stdout_of(&db, &["ls"]);
     let lines: Vec<_> = listing.lines().collect();
     assert_eq!(lines.len(), 2, "{listing}");
-    assert!(lines[0].ends_with(&server.url("/b")), "{listing}");
-    assert!(
-        lines[0].contains("fresh") && lines[0].contains("1d"),
+    let fields: Vec<_> = lines[0].split(' ').skip(1).collect();
+    assert_eq!(
+        fields,
+        ["1d", "fresh", "2B", "0", &server.url("/b")],
         "{listing}"
     );
-    assert!(lines[1].contains("4B"), "{listing}");
+    assert!(lines[1].ends_with(&server.url("/a")), "{listing}");
 }
 
 #[test]
@@ -90,6 +91,10 @@ fn rm_requires_one_kind_of_target() {
     let db = dir.path().join("c.db");
     noted(&db).arg("rm").assert().code(2);
     noted(&db).args(["rm", "--all", "--stale"]).assert().code(2);
+    noted(&db)
+        .args(["rm", "https://a.io/", "--all"])
+        .assert()
+        .code(2);
 }
 
 #[test]
@@ -107,4 +112,17 @@ fn stats_counts() {
             .and(predicate::str::contains("hits: 1"))
             .and(predicate::str::contains(db.to_string_lossy().as_ref())),
     );
+}
+
+#[test]
+fn rm_invalid_url_removes_nothing() {
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    let server = server();
+    fetch(&db, &server.url("/a"), "1d");
+    noted(&db)
+        .args(["rm", &server.url("/a"), "file:///x"])
+        .assert()
+        .failure();
+    assert!(stdout_of(&db, &["ls"]).contains("/a"));
 }
