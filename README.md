@@ -63,6 +63,16 @@ Setup: `cargo install --path .`, then add this to `~/.claude/settings.json`:
 }
 ```
 
+## Agent skill
+
+`skill/SKILL.md` tells an agent when to use noted and how to pick a TTL. To install it for Claude Code:
+
+```
+cp -r skill ~/.claude/skills/noted
+```
+
+The hook covers agents that reach for curl or WebFetch by habit. The skill covers picking the TTL and using `--section`.
+
 ## After cloning
 
 ```
