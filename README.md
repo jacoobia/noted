@@ -42,6 +42,27 @@ noted rm --all
 noted stats              # totals and the DB path
 ```
 
+## Claude Code hook
+
+`noted hook` reads a PreToolUse event on stdin and does two things:
+
+- A plain `curl <url>` (only `-s -S -L -f` and their long forms, one http(s) URL, optionally piped into something) becomes `noted get <url>`. When it's piped, it becomes `noted get --raw --quiet <url> | ...` so the next command still gets the original bytes. Anything with headers, a method, a body, `-o`, redirects or `;`/`&&` is left alone.
+- WebFetch is denied with a message telling the agent to use `noted get` instead. `NOTED_ALLOW_WEBFETCH=1` turns that off.
+
+The rewritten command still goes through the normal permission prompt. It always exits 0, so a bug in it never blocks a tool call.
+
+Setup: `cargo install --path .`, then add this to `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash|WebFetch", "hooks": [{ "type": "command", "command": "noted hook" }] }
+    ]
+  }
+}
+```
+
 ## After cloning
 
 ```

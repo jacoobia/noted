@@ -1,7 +1,8 @@
+use std::io::Read;
 use std::process::ExitCode;
 use std::time::Duration;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use clap::{ArgGroup, Parser, Subcommand};
 use noted::cache::{Store, db_path};
 use noted::get::{self, GetArgs};
@@ -55,7 +56,12 @@ enum Command {
 }
 
 fn main() -> ExitCode {
-    run(Cli::parse().command).unwrap_or_else(|err| {
+    let command = Cli::parse().command;
+    if matches!(command, Command::Hook) {
+        hook();
+        return ExitCode::SUCCESS;
+    }
+    run(command).unwrap_or_else(|err| {
         eprintln!("noted: {err:#}");
         ExitCode::FAILURE
     })
@@ -93,7 +99,18 @@ fn run(command: Command) -> Result<ExitCode> {
             let path = db_path();
             manage::stats(&Store::open(&path)?, &path).map(|()| ExitCode::SUCCESS)
         }
-        Command::Hook => bail!("not implemented"),
+        Command::Hook => unreachable!("handled in main"),
+    }
+}
+
+fn hook() {
+    let mut input = String::new();
+    if std::io::stdin().read_to_string(&mut input).is_err() {
+        return;
+    }
+    let allow_webfetch = std::env::var("NOTED_ALLOW_WEBFETCH").is_ok_and(|v| v == "1");
+    if let Some(response) = noted::hook::respond(&input, allow_webfetch) {
+        let _ = noted::output::emit(response.as_bytes());
     }
 }
 
