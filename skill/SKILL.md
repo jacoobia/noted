@@ -16,7 +16,7 @@ noted get <url> --section "<heading>"
 
 - Pick `--ttl` from how often the source changes (table below). It is stored with the entry, so later reads can leave it out.
 - Use `--section` for long pages: it prints one heading and everything under it. When the heading is missing, noted exits 1 and lists the headings it found on stderr. Retry with one of those.
-- Pipe JSON straight into tools: `noted get --raw --quiet <url> | jq .field`.
+- Pipe JSON straight into tools: `noted get --raw <url> | jq .field`.
 - stderr carries one status line, e.g. `noted: hit · age 3h · ttl 7d · 200 text/html`. `hit` means it came from the cache, `revalidated` means the server confirmed nothing changed, and `stale` means the server was unreachable so you got the cached copy.
 
 ## Choosing a TTL
@@ -28,6 +28,8 @@ noted get <url> --section "<heading>"
 | Something the user says was just updated (a new game update, a release this week) | `1h` to `1d` |
 | Live APIs (prices, status, scores) | `5m` or less |
 | Must be current right now | `0s` |
+
+If a hook is installed, plain `curl <url>` calls get rewritten to `noted get` with the default TTL (1 day). For live data, call `noted get --ttl 5m <url>` yourself. Local dev servers (localhost, private IPs) are never rewritten or cached, so keep using curl for those.
 
 When the user says the data changed, or the cached copy looks wrong, add `--refresh`. noted rechecks with the server and keeps the cached copy if it's unchanged.
 

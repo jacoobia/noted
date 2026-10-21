@@ -1,5 +1,5 @@
 use serde_json::{Value, json};
-use url::Url;
+use url::{Host, Url};
 
 use crate::get::cache_key;
 
@@ -57,15 +57,26 @@ pub fn rewrite_curl(command: &str) -> Option<String> {
     let url = url.filter(|url| is_plain_web_url(&url.value))?;
     Some(match rest {
         None => format!("noted get {}", url.raw),
-        Some(rest) => format!("noted get --raw --quiet {} | {rest}", url.raw),
+        Some(rest) => format!("noted get --raw {} | {rest}", url.raw),
     })
 }
 
 fn is_plain_web_url(value: &str) -> bool {
     let has_glob = value.contains(['[', ']', '{', '}']);
-    let has_credentials =
-        Url::parse(value).is_ok_and(|url| !url.username().is_empty() || url.password().is_some());
-    cache_key(value).is_ok() && !has_glob && !has_credentials
+    let Ok(url) = Url::parse(value) else {
+        return false;
+    };
+    let has_credentials = !url.username().is_empty() || url.password().is_some();
+    cache_key(value).is_ok() && !has_glob && !has_credentials && !is_local(&url)
+}
+
+fn is_local(url: &Url) -> bool {
+    match url.host() {
+        Some(Host::Domain(name)) => matches!(name.rsplit('.').next(), Some("localhost" | "local")),
+        Some(Host::Ipv4(ip)) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
+        Some(Host::Ipv6(ip)) => ip.is_loopback() || ip.is_unique_local(),
+        None => true,
+    }
 }
 
 fn shell_quote(text: &str) -> String {
@@ -181,7 +192,7 @@ mod tests {
             ),
             (
                 "curl -s https://a.io/x | jq .name",
-                "noted get --raw --quiet https://a.io/x | jq .name",
+                "noted get --raw https://a.io/x | jq .name",
             ),
             (
                 "curl 'https://a.io/x?q=1&r=2'",
@@ -242,6 +253,13 @@ mod tests {
             "curl https://a.io/x |& cat",
             "curl https://a.io/x |",
             "/usr/bin/curl https://a.io",
+            "curl http://localhost:3000/",
+            "curl http://app.localhost/",
+            "curl http://printer.local/",
+            "curl http://127.0.0.1:8080/api",
+            "curl http://192.168.1.10/",
+            "curl http://10.0.0.5/",
+            "curl http://[::1]:8080/",
         ];
         for command in cases {
             assert_eq!(rewrite_curl(command), None, "{command}");
@@ -252,7 +270,7 @@ mod tests {
     fn quoting_is_preserved() {
         assert_eq!(
             rewrite_curl("curl 'https://a.io/x' | jq .").as_deref(),
-            Some("noted get --raw --quiet 'https://a.io/x' | jq .")
+            Some("noted get --raw 'https://a.io/x' | jq .")
         );
         assert_eq!(
             rewrite_curl("curl \"https://a.io/x?q=\\\"y\\\"\"").as_deref(),

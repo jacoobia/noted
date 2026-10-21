@@ -46,7 +46,7 @@ noted stats              # totals and the DB path
 
 `noted hook` reads a PreToolUse event on stdin and does two things:
 
-- A plain `curl <url>` (only `-s -S -L -f` and their long forms, one http(s) URL, optionally piped into something) becomes `noted get <url>`. When it's piped, it becomes `noted get --raw --quiet <url> | ...` so the next command still gets the original bytes. Anything with headers, a method, a body, `-o`, credentials in the URL, curl globs (`[1-3]`, `{a,b}`), output redirection (`>`) or `;`/`&&` before the pipe is left alone.
+- A plain `curl <url>` (only `-s -S -L -f` and their long forms, one http(s) URL, optionally piped into something) becomes `noted get <url>`. When it's piped, it becomes `noted get --raw <url> | ...` so the next command still gets the original bytes, and the status line on stderr still shows how old the data is. Local hosts (localhost, `.local`, private and loopback IPs) are left alone so a dev server is never cached. Anything with headers, a method, a body, `-o`, credentials in the URL, curl globs (`[1-3]`, `{a,b}`), output redirection (`>`) or `;`/`&&` before the pipe is left alone.
 - WebFetch is denied with a message telling the agent to use `noted get` instead. `NOTED_ALLOW_WEBFETCH=1` turns that off.
 
 The rewritten command still goes through the normal permission prompt. It always exits 0, so a bug in it never blocks a tool call. Bad arguments exit 64 instead of clap's usual 2, because Claude Code reads a 2 from a hook as "block this call".
