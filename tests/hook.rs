@@ -46,3 +46,14 @@ fn hook_respects_allow_webfetch() {
         .success()
         .stdout("");
 }
+
+#[test]
+fn bad_arguments_never_exit_with_the_blocking_code() {
+    let dir = TempDir::new().unwrap();
+    let out = noted(&dir.path().join("c.db"))
+        .args(["hook", "extra-arg"])
+        .write_stdin("{}")
+        .output()
+        .unwrap();
+    assert_ne!(out.status.code(), Some(2));
+}

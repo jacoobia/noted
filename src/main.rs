@@ -55,8 +55,22 @@ enum Command {
     Hook,
 }
 
+/// Claude Code treats exit code 2 from a hook as "block this tool call", so usage errors
+/// use 64 (`EX_USAGE`) rather than clap's default of 2.
+const USAGE_ERROR: u8 = 64;
+
 fn main() -> ExitCode {
-    let command = Cli::parse().command;
+    let command = match Cli::try_parse() {
+        Ok(cli) => cli.command,
+        Err(err) => {
+            let _ = err.print();
+            return if err.use_stderr() {
+                ExitCode::from(USAGE_ERROR)
+            } else {
+                ExitCode::SUCCESS
+            };
+        }
+    };
     if matches!(command, Command::Hook) {
         hook();
         return ExitCode::SUCCESS;

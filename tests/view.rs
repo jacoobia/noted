@@ -116,7 +116,7 @@ fn empty_section_is_rejected() {
     noted(&dir.path().join("c.db"))
         .args(["get", "--section", " ", "https://a.io/"])
         .assert()
-        .code(2);
+        .code(64);
 }
 
 #[test]

@@ -89,12 +89,15 @@ fn rm_all() {
 fn rm_requires_one_kind_of_target() {
     let dir = TempDir::new().unwrap();
     let db = dir.path().join("c.db");
-    noted(&db).arg("rm").assert().code(2);
-    noted(&db).args(["rm", "--all", "--stale"]).assert().code(2);
+    noted(&db).arg("rm").assert().code(64);
+    noted(&db)
+        .args(["rm", "--all", "--stale"])
+        .assert()
+        .code(64);
     noted(&db)
         .args(["rm", "https://a.io/", "--all"])
         .assert()
-        .code(2);
+        .code(64);
 }
 
 #[test]
