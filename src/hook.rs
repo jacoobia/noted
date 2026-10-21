@@ -1,9 +1,11 @@
 use serde_json::{Value, json};
+use url::Url;
 
 use crate::get::cache_key;
 
 const SAFE_LONG_FLAGS: [&str; 4] = ["silent", "show-error", "location", "fail"];
 const SAFE_SHORT_FLAGS: &str = "sSLf";
+const SHELL_BLANKS: [char; 2] = [' ', '\t'];
 
 pub fn respond(input: &str, allow_webfetch: bool) -> Option<String> {
     let event: Value = serde_json::from_str(input).ok()?;
@@ -24,8 +26,9 @@ pub fn respond(input: &str, allow_webfetch: bool) -> Option<String> {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "deny",
                 "permissionDecisionReason": format!(
-                    "Use `noted get {url}` instead of WebFetch: it caches the page and returns it \
-                     as markdown. Add --section \"<heading>\" to read one part."
+                    "Use `noted get {}` instead of WebFetch: it caches the page and returns it \
+                     as markdown. Add --section \"<heading>\" to read one part.",
+                    shell_quote(url)
                 ),
             })
         }
@@ -51,15 +54,22 @@ pub fn rewrite_curl(command: &str) -> Option<String> {
             return None;
         }
     }
-    let url = url.filter(|url| cache_key(&url.value).is_ok())?;
+    let url = url.filter(|url| is_plain_web_url(&url.value))?;
     Some(match rest {
         None => format!("noted get {}", url.raw),
-        Some(rest) => format!(
-            "noted get --raw --quiet {} | {}",
-            url.raw,
-            rest.trim_start()
-        ),
+        Some(rest) => format!("noted get --raw --quiet {} | {rest}", url.raw),
     })
+}
+
+fn is_plain_web_url(value: &str) -> bool {
+    let has_glob = value.contains(['[', ']', '{', '}']);
+    let has_credentials =
+        Url::parse(value).is_ok_and(|url| !url.username().is_empty() || url.password().is_some());
+    cache_key(value).is_ok() && !has_glob && !has_credentials
+}
+
+fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', r"'\''"))
 }
 
 fn split_first_pipe(command: &str) -> Option<(&str, Option<&str>)> {
@@ -81,11 +91,13 @@ fn split_first_pipe(command: &str) -> Option<(&str, Option<&str>)> {
             (Some(_), b'"') => quote = None,
             (_, b'\\') => escaped = true,
             (None, b'\'' | b'"') => quote = Some(byte),
-            (None, b'|') if bytes.get(i + 1) != Some(&b'|') => {
-                return Some((&command[..i], Some(&command[i + 1..])));
+            (None, b'|') => {
+                let rest = command[i + 1..].trim_start_matches(SHELL_BLANKS);
+                return (!rest.is_empty() && !rest.starts_with(['|', '&']))
+                    .then_some((&command[..i], Some(rest)));
             }
             (Some(_), b'$' | b'`')
-            | (None, b'|' | b';' | b'&' | b'>' | b'<' | b'`' | b'$' | b'(' | b')' | b'\n') => {
+            | (None, b';' | b'&' | b'>' | b'<' | b'`' | b'$' | b'(' | b')' | b'#' | b'\n') => {
                 return None;
             }
             _ => {}
@@ -123,7 +135,7 @@ fn words(text: &str) -> Vec<Word<'_>> {
                 quote = Some(ch);
                 start.get_or_insert(i);
             }
-            (None, ch) if ch.is_whitespace() => {
+            (None, ' ' | '\t') => {
                 if let Some(begin) = start.take() {
                     let value = std::mem::take(&mut value);
                     words.push(Word {
@@ -209,6 +221,45 @@ mod tests {
         }
     }
 
+    #[test]
+    fn each_guard_rejects_on_its_own() {
+        let cases = [
+            "curl -H\"Authorization: Bearer t\" https://a.io",
+            "curl -XPOST https://a.io",
+            "curl -Lo https://a.io",
+            "curl -I https://a.io",
+            "curl https://a.io/x;id",
+            "curl https://a.io/x&&id",
+            "curl https://a.io/x>f",
+            "curl \"https://a.io/$X\"",
+            "curl https://a.io/$(id)",
+            "curl https://a.io/x#frag",
+            "curl -s https://user:pass@a.io/x",
+            "curl -s https://token@a.io/x",
+            "curl 'https://a.io/[1-3]'",
+            "curl https://a.io/{a,b}",
+            "curl\u{a0}https://a.io",
+            "curl https://a.io/x |& cat",
+            "curl https://a.io/x |",
+            "/usr/bin/curl https://a.io",
+        ];
+        for command in cases {
+            assert_eq!(rewrite_curl(command), None, "{command}");
+        }
+    }
+
+    #[test]
+    fn quoting_is_preserved() {
+        assert_eq!(
+            rewrite_curl("curl 'https://a.io/x' | jq .").as_deref(),
+            Some("noted get --raw --quiet 'https://a.io/x' | jq .")
+        );
+        assert_eq!(
+            rewrite_curl("curl \"https://a.io/x?q=\\\"y\\\"\"").as_deref(),
+            Some("noted get \"https://a.io/x?q=\\\"y\\\"\"")
+        );
+    }
+
     fn bash(command: &str) -> String {
         json!({
             "hook_event_name": "PreToolUse",
@@ -250,7 +301,7 @@ mod tests {
             hook["permissionDecisionReason"]
                 .as_str()
                 .unwrap()
-                .contains("noted get https://a.io/x")
+                .contains("noted get 'https://a.io/x'")
         );
         assert_eq!(respond(&input, true), None);
     }
@@ -261,5 +312,11 @@ mod tests {
         assert_eq!(respond(&read, false), None);
         assert_eq!(respond("{not json", false), None);
         assert_eq!(respond("{\"tool_name\": \"Bash\"}", false), None);
+        assert_eq!(
+            respond("{\"tool_name\": \"Bash\", \"tool_input\": 7}", false),
+            None
+        );
+        let numeric = json!({"tool_name": "Bash", "tool_input": {"command": 7}}).to_string();
+        assert_eq!(respond(&numeric, false), None);
     }
 }
