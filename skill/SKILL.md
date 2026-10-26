@@ -15,9 +15,11 @@ noted get <url> --section "<heading>"
 ```
 
 - Pick `--ttl` from how often the source changes (table below). It is stored with the entry, so later reads can leave it out.
-- Use `--section` for long pages: it prints one heading and everything under it. When the heading is missing, noted exits 1 and lists the headings it found on stderr. Retry with one of those.
+- Use `--section` for long pages: it prints one heading and everything under it. When the heading is missing, noted exits 1 and lists the headings it found on stderr. Retry with one of those. To see a page's outline without reading it, ask for a heading that doesn't exist.
 - Pipe JSON straight into tools: `noted get --raw <url> | jq .field`.
-- stderr carries one status line, e.g. `noted: hit · age 3h · ttl 7d · 200 text/html`. `hit` means it came from the cache, `revalidated` means the server confirmed nothing changed, and `stale` means the server was unreachable so you got the cached copy.
+- stderr carries one status line, e.g. `noted: hit · age 3h · ttl 7d · 200 text/html`. `hit` means it came from the cache, `revalidated` means the server confirmed nothing changed, and `stale` means the server was unreachable, timed out or returned a 5xx, so you got the cached copy.
+- Exit 1 with `noted: HTTP <code>` on stderr means stdout holds the server's error page, not the content you asked for.
+- If the markdown comes back empty, the page probably renders with JavaScript. Check `--raw` to see what the server sent.
 
 ## Choosing a TTL
 
@@ -39,4 +41,4 @@ When the user says the data changed, or the cached copy looks wrong, add `--refr
 - `noted rm <url>` drops one entry. `noted rm --stale` clears expired ones.
 - `noted get --help` has the full flag list.
 
-If `noted` isn't on PATH, tell the user it needs installing (`cargo install --path .` from the noted repo) and fall back to curl for now.
+If `noted` isn't on PATH, tell the user it isn't installed and point them at https://github.com/jacoobia/noted#install. Fall back to curl for now.
