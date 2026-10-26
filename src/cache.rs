@@ -7,6 +7,7 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 
 const SCHEMA: &str = "
     PRAGMA journal_mode = WAL;
+    PRAGMA secure_delete = ON;
     CREATE TABLE IF NOT EXISTS entries (
         url TEXT PRIMARY KEY,
         status INTEGER NOT NULL,
@@ -146,21 +147,32 @@ impl Store {
     }
 
     pub fn remove(&self, url: &str) -> Result<bool> {
-        Ok(self
+        let removed = self
             .conn
-            .execute("DELETE FROM entries WHERE url = ?1", [url])?
-            > 0)
+            .execute("DELETE FROM entries WHERE url = ?1", [url])?;
+        self.flush_wal()?;
+        Ok(removed > 0)
     }
 
     pub fn remove_stale(&self, now: i64) -> Result<usize> {
-        Ok(self.conn.execute(
+        let removed = self.conn.execute(
             "DELETE FROM entries WHERE fetched_at + ttl_secs <= ?1",
             [now],
-        )?)
+        )?;
+        self.flush_wal()?;
+        Ok(removed)
     }
 
     pub fn clear(&self) -> Result<usize> {
-        Ok(self.conn.execute("DELETE FROM entries", [])?)
+        let removed = self.conn.execute("DELETE FROM entries", [])?;
+        self.flush_wal()?;
+        Ok(removed)
+    }
+
+    fn flush_wal(&self) -> Result<()> {
+        self.conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))?;
+        Ok(())
     }
 }
 
