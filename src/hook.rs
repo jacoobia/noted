@@ -6,6 +6,20 @@ use crate::get::cache_key;
 const SAFE_LONG_FLAGS: [&str; 4] = ["silent", "show-error", "location", "fail"];
 const SAFE_SHORT_FLAGS: &str = "sSLf";
 const SHELL_BLANKS: [char; 2] = [' ', '\t'];
+const SECRET_PARAMS: [&str; 12] = [
+    "token",
+    "access_token",
+    "auth",
+    "key",
+    "api_key",
+    "apikey",
+    "secret",
+    "client_secret",
+    "password",
+    "sig",
+    "signature",
+    "x-amz-signature",
+];
 
 pub fn respond(input: &str, allow_webfetch: bool) -> Option<String> {
     let event: Value = serde_json::from_str(input).ok()?;
@@ -67,7 +81,16 @@ fn is_plain_web_url(value: &str) -> bool {
         return false;
     };
     let has_credentials = !url.username().is_empty() || url.password().is_some();
-    cache_key(value).is_ok() && !has_glob && !has_credentials && !is_local(&url)
+    cache_key(value).is_ok()
+        && !has_glob
+        && !has_credentials
+        && !has_secret_param(&url)
+        && !is_local(&url)
+}
+
+fn has_secret_param(url: &Url) -> bool {
+    url.query_pairs()
+        .any(|(name, _)| SECRET_PARAMS.contains(&name.to_ascii_lowercase().as_str()))
 }
 
 fn is_local(url: &Url) -> bool {
@@ -253,6 +276,9 @@ mod tests {
             "curl https://a.io/x |& cat",
             "curl https://a.io/x |",
             "/usr/bin/curl https://a.io",
+            "curl https://api.a.io/me?access_token=abc",
+            "curl 'https://api.a.io/x?q=1&api_key=abc'",
+            "curl https://a.io/x?Signature=abc",
             "curl http://localhost:3000/",
             "curl http://app.localhost/",
             "curl http://printer.local/",
