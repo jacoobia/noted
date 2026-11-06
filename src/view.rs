@@ -130,10 +130,10 @@ fn is_rule(cell: &str) -> bool {
     !cell.is_empty() && cell.chars().all(|ch| ch == '-')
 }
 
-struct Heading<'a> {
+struct Heading {
     line: usize,
     level: usize,
-    title: &'a str,
+    title: String,
 }
 
 pub fn section(text: &str, heading: &str) -> Result<String, Vec<String>> {
@@ -144,7 +144,7 @@ pub fn section(text: &str, heading: &str) -> Result<String, Vec<String>> {
         .iter()
         .position(|h| h.title.to_lowercase() == wanted)
     else {
-        return Err(headings.iter().map(|h| h.title.to_owned()).collect());
+        return Err(headings.into_iter().map(|h| h.title).collect());
     };
     let start = &headings[index];
     let end = headings[index + 1..]
@@ -154,13 +154,14 @@ pub fn section(text: &str, heading: &str) -> Result<String, Vec<String>> {
     Ok(lines[start.line..end].join("\n").trim_end().to_owned())
 }
 
-fn headings<'a>(lines: &[&'a str]) -> Vec<Heading<'a>> {
+fn headings(lines: &[&str]) -> Vec<Heading> {
     let mut in_fence = false;
     let mut found = Vec::new();
     for (line, text) in lines.iter().enumerate() {
         if is_fence(text) {
             in_fence = !in_fence;
         } else if !in_fence && let Some((level, title)) = parse_heading(text) {
+            let title = link_text(title);
             found.push(Heading { line, level, title });
         }
     }
@@ -180,6 +181,24 @@ fn parse_heading(line: &str) -> Option<(usize, &str)> {
     } else {
         Some((level, title))
     }
+}
+
+fn link_text(markdown: &str) -> String {
+    let mut text = String::new();
+    let mut rest = markdown;
+    while let Some(open) = rest.find('[') {
+        let Some((label, after)) = rest[open + 1..].split_once("](") else {
+            break;
+        };
+        let Some(close) = after.find(')') else {
+            break;
+        };
+        text.push_str(&rest[..open]);
+        text.push_str(label);
+        rest = &after[close + 1..];
+    }
+    text.push_str(rest);
+    text
 }
 
 fn is_fence(line: &str) -> bool {
@@ -359,6 +378,19 @@ mod tests {
             "## Drops ##\nash\n#hashtag"
         );
         assert_eq!(section(text, "über").unwrap(), "## Über\nu");
+    }
+
+    #[test]
+    fn section_matches_linked_headings_by_their_text() {
+        let text = "# Array.prototype.at()\n## [Description](#description)\nbody\n## [Examples](#examples)\nx";
+        assert_eq!(
+            section(text, "description").unwrap(),
+            "## [Description](#description)\nbody"
+        );
+        assert_eq!(
+            section(text, "nope").unwrap_err(),
+            ["Array.prototype.at()", "Description", "Examples"]
+        );
     }
 
     #[test]
