@@ -130,10 +130,18 @@ impl Drop for TestServer {
     }
 }
 
+pub const TEST_AGENT: &str = "TestAgent/1.0 (+mailto:tests@example.com)";
+
 pub fn noted(db: &Path) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_noted"));
-    cmd.env("NOTED_DB", db).env_remove("NOTED_CONTACT");
+    cmd.env("NOTED_DB", db)
+        .env("NOTED_CONFIG_DIR", config_dir(db))
+        .env("NOTED_USER_AGENT", TEST_AGENT);
     cmd
+}
+
+pub fn config_dir(db: &Path) -> std::path::PathBuf {
+    db.with_extension("config")
 }
 
 pub fn answer_once_then_reset(body: &'static str) -> String {
