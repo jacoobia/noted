@@ -55,9 +55,10 @@ pub fn stats(store: &Store, path: &Path) -> Result<()> {
     let stale = entries.iter().filter(|e| !e.is_fresh(now)).count();
     let bytes: i64 = entries.iter().map(|e| e.size).sum();
     let hits: i64 = entries.iter().map(|e| e.hits).sum();
-    let agent = match config::user_agent()? {
-        Some((value, source)) => format!("{value} ({})", source.label()),
-        None => "not set".to_owned(),
+    let agent = match config::user_agent() {
+        Ok(Some((value, source))) => format!("{value} ({})", source.label()),
+        Ok(None) => "not set".to_owned(),
+        Err(err) => format!("invalid ({err})"),
     };
     emit(
         format!(

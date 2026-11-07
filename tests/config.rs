@@ -70,3 +70,48 @@ fn invalid_user_agents_are_usage_errors() {
             .code(64);
     }
 }
+
+#[test]
+fn bad_env_user_agent_is_a_usage_error_before_any_request() {
+    let server = common::TestServer::start(vec![(
+        "/page",
+        common::always(|| common::Reply::ok("text/plain", "ok")),
+    )]);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    for value in ["line\r\nInjected: 1", "agént/1", "/no-token"] {
+        noted(&db)
+            .env("NOTED_USER_AGENT", value)
+            .args(["get", &server.url("/page")])
+            .assert()
+            .code(64)
+            .stderr(predicate::str::contains("NOTED_USER_AGENT"));
+    }
+    assert_eq!(server.hits("/page"), 0);
+}
+
+#[test]
+fn bad_saved_user_agent_asks_for_setup_again() {
+    let server = common::TestServer::start(vec![(
+        "/page",
+        common::always(|| common::Reply::ok("text/plain", "ok")),
+    )]);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    let config = common::config_dir(&db);
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(config.join("user-agent"), "bad\u{7}agent\n").unwrap();
+    noted(&db)
+        .env_remove("NOTED_USER_AGENT")
+        .args(["get", &server.url("/page")])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("noted config user-agent"));
+    noted(&db)
+        .env_remove("NOTED_USER_AGENT")
+        .arg("stats")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("user agent: invalid"));
+    assert_eq!(server.hits("/page"), 0);
+}

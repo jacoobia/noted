@@ -93,6 +93,8 @@ fn main() -> ExitCode {
         eprintln!("noted: {err:#}");
         if err.is::<config::SetupNeeded>() {
             ExitCode::from(config::SETUP_NEEDED)
+        } else if err.is::<config::InvalidEnvUserAgent>() {
+            ExitCode::from(USAGE_ERROR)
         } else {
             ExitCode::FAILURE
         }
