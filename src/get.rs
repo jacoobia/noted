@@ -9,7 +9,7 @@ use crate::config::require_user_agent;
 use crate::fetch::{Response, fetch};
 use crate::output::{emit, short_duration, short_size};
 use crate::robots::{is_allowed, path_and_query, product_token, robots_url};
-use crate::view::{html_to_markdown, is_html, outline, section};
+use crate::view::{html_to_markdown, is_html, outline, plain, section};
 
 const DEFAULT_TTL_SECS: i64 = 24 * 60 * 60;
 const ROBOTS_TTL_SECS: i64 = 24 * 60 * 60;
@@ -20,9 +20,16 @@ pub struct GetArgs {
     pub url: String,
     pub ttl: Option<Duration>,
     pub refresh: bool,
-    pub raw: bool,
+    pub format: Format,
     pub select: Select,
     pub quiet: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Format {
+    Markdown,
+    Plain,
+    Raw,
 }
 
 pub enum Select {
@@ -269,6 +276,11 @@ fn serve(entry: &Entry, state: &str, now: i64, args: &GetArgs) -> Result<ExitCod
         } else {
             text.into_owned()
         };
+        let text = if args.format == Format::Plain {
+            plain(&text)
+        } else {
+            text
+        };
         let Select::Section(heading) = &args.select else {
             let headings = outline(&text);
             if headings.is_empty() {
@@ -293,8 +305,13 @@ fn serve(entry: &Entry, state: &str, now: i64, args: &GetArgs) -> Result<ExitCod
             }
         };
     }
-    if html && !args.raw {
+    if html && args.format != Format::Raw {
         let markdown = html_to_markdown(&String::from_utf8_lossy(&entry.body));
+        let markdown = if args.format == Format::Plain {
+            plain(&markdown)
+        } else {
+            markdown
+        };
         emit(format!("{markdown}\n").as_bytes())?;
     } else {
         emit(&entry.body)?;

@@ -211,6 +211,34 @@ struct Heading {
     title: String,
 }
 
+pub fn plain(markdown: &str) -> String {
+    let mut in_fence = false;
+    let mut lines = Vec::new();
+    for line in markdown.lines() {
+        let fence = is_fence(line);
+        if fence {
+            in_fence = !in_fence;
+        }
+        if in_fence || fence {
+            lines.push(line.to_owned());
+            continue;
+        }
+        let unlinked: Vec<String> = line
+            .split('`')
+            .enumerate()
+            .map(|(i, part)| {
+                if i % 2 == 0 {
+                    link_text(part)
+                } else {
+                    part.to_owned()
+                }
+            })
+            .collect();
+        lines.push(unlinked.join("`"));
+    }
+    lines.join("\n")
+}
+
 pub fn outline(text: &str) -> Vec<String> {
     let lines: Vec<&str> = text.lines().collect();
     headings(&lines)
