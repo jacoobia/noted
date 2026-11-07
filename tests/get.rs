@@ -529,6 +529,9 @@ fn help_explains_ttl_offline_and_exit_codes() {
         .assert()
         .success()
         .stdout(
-            predicate::str::contains("settings.json").and(predicate::str::contains("WebFetch")),
+            predicate::str::contains("\"type\": \"command\"")
+                .and(predicate::str::contains("Bash(noted get:*)"))
+                .and(predicate::str::contains("--raw"))
+                .and(predicate::str::contains("NOTED_ALLOW_WEBFETCH")),
         );
 }

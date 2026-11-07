@@ -211,11 +211,11 @@ struct Heading {
     title: String,
 }
 
-pub fn outline(text: &str) -> Vec<&str> {
+pub fn outline(text: &str) -> Vec<String> {
     let lines: Vec<&str> = text.lines().collect();
     headings(&lines)
         .iter()
-        .map(|heading| lines[heading.line])
+        .map(|heading| format!("{} {}", "#".repeat(heading.level), heading.title))
         .collect()
 }
 

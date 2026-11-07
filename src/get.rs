@@ -270,9 +270,12 @@ fn serve(entry: &Entry, state: &str, now: i64, args: &GetArgs) -> Result<ExitCod
             text.into_owned()
         };
         let Select::Section(heading) = &args.select else {
-            let mut lines = outline(&text).join("\n");
-            lines.push('\n');
-            emit(lines.as_bytes())?;
+            let headings = outline(&text);
+            if headings.is_empty() {
+                eprintln!("noted: no headings on this page");
+            } else {
+                emit(format!("{}\n", headings.join("\n")).as_bytes())?;
+            }
             return Ok(ExitCode::SUCCESS);
         };
         return match section(&text, heading) {

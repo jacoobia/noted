@@ -77,7 +77,22 @@ Exit codes: 0 success, 1 an error or a robots.txt refusal, 3 no User-Agent set y
 
 const HOOK_HELP: &str = "Handle a Claude Code pre-tool-use hook event from stdin.
 
-Reads one PreToolUse event as JSON. Plain `curl <url>` Bash calls are rewritten to `noted get <url>`, and WebFetch calls are denied with a message pointing at noted. Anything else passes through untouched. To install, add it to ~/.claude/settings.json under hooks.PreToolUse with the matcher \"Bash|WebFetch\" and the command \"noted hook\". It always exits 0, so it can never block a tool call.";
+Reads one PreToolUse event as JSON. A plain `curl <url>` Bash call becomes `noted get <url>`, \
+and a piped `curl <url> | ...` becomes `noted get --raw <url> | ...`. WebFetch calls are \
+denied with a message pointing at noted; set NOTED_ALLOW_WEBFETCH=1 to allow them. Anything \
+else passes through untouched. It always exits 0, so it can never block a tool call.
+
+To install, add this to ~/.claude/settings.json. The permission rule lets rewritten commands \
+run without a prompt:
+
+{
+  \"hooks\": {
+    \"PreToolUse\": [
+      { \"matcher\": \"Bash|WebFetch\", \"hooks\": [{ \"type\": \"command\", \"command\": \"noted hook\" }] }
+    ]
+  },
+  \"permissions\": { \"allow\": [\"Bash(noted get:*)\"] }
+}";
 
 #[derive(Subcommand)]
 enum Setting {
