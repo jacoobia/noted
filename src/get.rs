@@ -13,6 +13,8 @@ use crate::view::{html_to_markdown, is_html, section};
 
 const DEFAULT_TTL_SECS: i64 = 24 * 60 * 60;
 const ROBOTS_TTL_SECS: i64 = 24 * 60 * 60;
+const ROBOTS_REDIRECTS: u32 = 5;
+const MAX_PAGE_REDIRECTS: u32 = 10;
 
 pub struct GetArgs {
     pub url: String,
@@ -44,19 +46,16 @@ pub fn run(store: &Store, args: &GetArgs) -> Result<ExitCode> {
 
     let Some(mut entry) = cached else {
         let agent = require_user_agent()?;
-        match check_robots(store, &key, &agent, now)? {
-            Robots::Allowed => {}
-            Robots::Disallowed(reason) => bail!(reason),
-            Robots::Unreachable(why) => {
+        return match fetch_page(store, &key, &agent, None, None, now)? {
+            Fetched::Blocked(Blocked::Disallowed(reason)) => bail!(reason),
+            Fetched::Blocked(Blocked::Unreachable(why)) => {
                 bail!("couldn't check robots.txt ({why}), so nothing was fetched")
             }
-        }
-        return match fetch(&key, &agent, None, None)? {
-            response if is_success(response.status) => {
+            Fetched::Page(response) if is_success(response.status) => {
                 let entry = store_response(store, key, response, now, ttl_secs)?;
                 serve(&entry, "miss", now, args)
             }
-            response => http_error(response.status, &response.body),
+            Fetched::Page(response) => http_error(response.status, &response.body),
         };
     };
 
@@ -70,30 +69,29 @@ pub fn run(store: &Store, args: &GetArgs) -> Result<ExitCode> {
     }
 
     let agent = require_user_agent()?;
-    match check_robots(store, &key, &agent, now)? {
-        Robots::Allowed => {}
-        Robots::Disallowed(reason) => bail!(reason),
-        Robots::Unreachable(why) => {
-            eprintln!("noted: couldn't check robots.txt ({why}), serving the stale copy");
-            return serve(&entry, "stale", now, args);
-        }
-    }
-    match fetch(
+    match fetch_page(
+        store,
         &key,
         &agent,
         entry.etag.as_deref(),
         entry.last_modified.as_deref(),
+        now,
     ) {
-        Ok(response) if response.status == 304 => {
+        Ok(Fetched::Blocked(Blocked::Disallowed(reason))) => bail!(reason),
+        Ok(Fetched::Blocked(Blocked::Unreachable(why))) => {
+            eprintln!("noted: couldn't check robots.txt ({why}), serving the stale copy");
+            serve(&entry, "stale", now, args)
+        }
+        Ok(Fetched::Page(response)) if response.status == 304 => {
             store.touch(&key, now, ttl_secs)?;
             entry.fetched_at = now;
             serve(&entry, "revalidated", now, args)
         }
-        Ok(response) if is_success(response.status) => {
+        Ok(Fetched::Page(response)) if is_success(response.status) => {
             let entry = store_response(store, key, response, now, ttl_secs)?;
             serve(&entry, "refreshed", now, args)
         }
-        Ok(response) if response.status >= 500 => {
+        Ok(Fetched::Page(response)) if response.status >= 500 => {
             eprintln!("noted: HTTP {}, serving the stale copy", response.status);
             serve(&entry, "stale", now, args)
         }
@@ -102,27 +100,64 @@ pub fn run(store: &Store, args: &GetArgs) -> Result<ExitCode> {
             eprintln!("noted: {err:#}, serving the stale copy");
             serve(&entry, "stale", now, args)
         }
-        Ok(response) => http_error(response.status, &response.body),
+        Ok(Fetched::Page(response)) => http_error(response.status, &response.body),
     }
 }
 
-enum Robots {
-    Allowed,
+enum Fetched {
+    Page(Response),
+    Blocked(Blocked),
+}
+
+enum Blocked {
     Disallowed(String),
     Unreachable(String),
 }
 
-fn check_robots(store: &Store, page: &str, agent: &str, now: i64) -> Result<Robots> {
+fn fetch_page(
+    store: &Store,
+    start: &str,
+    agent: &str,
+    etag: Option<&str>,
+    last_modified: Option<&str>,
+    now: i64,
+) -> Result<Fetched> {
+    let mut url = start.to_owned();
+    for _ in 0..=MAX_PAGE_REDIRECTS {
+        if let Some(blocked) = check_robots(store, &url, agent, now)? {
+            return Ok(Fetched::Blocked(blocked));
+        }
+        let response = fetch(&url, agent, etag, last_modified, 0)?;
+        match redirect_target(&url, &response) {
+            Some(next) => url = next,
+            None => return Ok(Fetched::Page(response)),
+        }
+    }
+    bail!("stopped after {MAX_PAGE_REDIRECTS} redirects from {start}")
+}
+
+fn redirect_target(current: &str, response: &Response) -> Option<String> {
+    if !matches!(response.status, 301 | 302 | 303 | 307 | 308) {
+        return None;
+    }
+    let next = Url::parse(current)
+        .ok()?
+        .join(response.location.as_deref()?)
+        .ok()?;
+    matches!(next.scheme(), "http" | "https").then(|| next.into())
+}
+
+fn check_robots(store: &Store, page: &str, agent: &str, now: i64) -> Result<Option<Blocked>> {
     let page = Url::parse(page)?;
     if page.path() == "/robots.txt" {
-        return Ok(Robots::Allowed);
+        return Ok(None);
     }
     let url = robots_url(&page);
     let origin = page.origin().ascii_serialization();
     let cached = store.robots(&origin)?;
     let rules = match cached {
         Some((body, fetched_at)) if now < fetched_at.saturating_add(ROBOTS_TTL_SECS) => body,
-        stale => match fetch(&url, agent, None, None) {
+        stale => match fetch(&url, agent, None, None, ROBOTS_REDIRECTS) {
             Ok(response) if response.status < 500 => {
                 let body = if is_success(response.status) {
                     String::from_utf8_lossy(&response.body).into_owned()
@@ -134,23 +169,28 @@ fn check_robots(store: &Store, page: &str, agent: &str, now: i64) -> Result<Robo
             }
             Ok(response) => match stale {
                 Some((body, _)) => body,
-                None => return Ok(Robots::Unreachable(format!("HTTP {}", response.status))),
+                None => {
+                    return Ok(Some(Blocked::Unreachable(format!(
+                        "HTTP {}",
+                        response.status
+                    ))));
+                }
             },
             Err(err) => match stale {
                 Some((body, _)) => body,
-                None => return Ok(Robots::Unreachable(format!("{err:#}"))),
+                None => return Ok(Some(Blocked::Unreachable(format!("{err:#}")))),
             },
         },
     };
     let token = product_token(agent);
     let path = path_and_query(&page);
     if is_allowed(&rules, token, &path) {
-        Ok(Robots::Allowed)
+        Ok(None)
     } else {
         let host = page.host_str().unwrap_or_default();
-        Ok(Robots::Disallowed(format!(
+        Ok(Some(Blocked::Disallowed(format!(
             "robots.txt on {host} disallows {path} for {token}, so nothing was fetched"
-        )))
+        ))))
     }
 }
 

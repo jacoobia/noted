@@ -109,3 +109,77 @@ fn fetching_robots_txt_itself_skips_the_check() {
         .stdout("User-agent: *\nDisallow: /\n");
     assert_eq!(server.hits("/robots.txt"), 1);
 }
+
+#[test]
+fn redirect_into_a_disallowed_path_is_refused() {
+    let server = TestServer::start(vec![
+        (
+            "/robots.txt",
+            always(|| Reply::ok("text/plain", "User-agent: *\nDisallow: /private\n")),
+        ),
+        (
+            "/go",
+            always(|| Reply::status(302).header("Location", "/private/page")),
+        ),
+        (
+            "/private/page",
+            always(|| Reply::ok("text/plain", "private")),
+        ),
+    ]);
+    let dir = TempDir::new().unwrap();
+    noted(&dir.path().join("c.db"))
+        .args(["get", &server.url("/go")])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("disallows /private/page"));
+    assert_eq!(server.hits("/private/page"), 0);
+}
+
+#[test]
+fn cross_host_redirect_checks_the_target_hosts_robots_txt() {
+    let target = TestServer::start(vec![
+        (
+            "/robots.txt",
+            always(|| Reply::ok("text/plain", "User-agent: *\nDisallow: /\n")),
+        ),
+        ("/page", always(|| Reply::ok("text/plain", "elsewhere"))),
+    ]);
+    let location = target.url("/page");
+    let origin = TestServer::start(vec![(
+        "/go",
+        always(move || Reply::status(301).header("Location", &location)),
+    )]);
+    let dir = TempDir::new().unwrap();
+    noted(&dir.path().join("c.db"))
+        .args(["get", &origin.url("/go")])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("robots.txt"));
+    assert_eq!(target.hits("/page"), 0);
+    assert_eq!(target.hits("/robots.txt"), 1);
+}
+
+#[test]
+fn redirect_to_an_allowed_path_is_followed_and_cached_under_the_original_url() {
+    let server = site("User-agent: *\nDisallow: /private\n");
+    let moved = TestServer::start(vec![(
+        "/old",
+        always({
+            let to = server.url("/public");
+            move || Reply::status(308).header("Location", &to)
+        }),
+    )]);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    noted(&db)
+        .args(["get", &moved.url("/old")])
+        .assert()
+        .success()
+        .stdout("public page");
+    noted(&db)
+        .args(["get", &moved.url("/old")])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("noted: hit"));
+    assert_eq!(moved.hits("/old"), 1);
+}

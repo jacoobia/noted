@@ -10,6 +10,7 @@ pub struct Response {
     pub content_type: Option<String>,
     pub etag: Option<String>,
     pub last_modified: Option<String>,
+    pub location: Option<String>,
     pub body: Vec<u8>,
 }
 
@@ -18,10 +19,13 @@ pub fn fetch(
     user_agent: &str,
     etag: Option<&str>,
     last_modified: Option<&str>,
+    max_redirects: u32,
 ) -> Result<Response> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
         .timeout_global(Some(timeout()))
+        .max_redirects(max_redirects)
+        .max_redirects_will_error(false)
         .build()
         .into();
     let mut request = agent.get(url).header("User-Agent", user_agent);
@@ -39,10 +43,11 @@ pub fn fetch(
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned)
     };
-    let (content_type, etag, last_modified) = (
+    let (content_type, etag, last_modified, location) = (
         header("Content-Type"),
         header("ETag"),
         header("Last-Modified"),
+        header("Location"),
     );
     let body = response
         .body_mut()
@@ -54,6 +59,7 @@ pub fn fetch(
         content_type,
         etag,
         last_modified,
+        location,
         body,
     })
 }
