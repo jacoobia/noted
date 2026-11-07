@@ -228,7 +228,7 @@ fn store_response(
 }
 
 fn http_error(status: u16) -> ExitCode {
-    eprintln!("noted: HTTP {status}, nothing printed or cached");
+    eprintln!("noted: HTTP {status}, nothing printed");
     ExitCode::FAILURE
 }
 

@@ -89,13 +89,17 @@ fn has_text(element: ElementRef) -> bool {
 }
 
 fn repeats_a_text_link_in_its_row(link: ElementRef, anchors: &Selector) -> bool {
-    let href = link.value().attr("href");
+    let Some(href) = link.value().attr("href") else {
+        return false;
+    };
     link.ancestors()
         .filter_map(ElementRef::wrap)
         .find(|ancestor| ancestor.value().name() == "tr")
         .is_some_and(|row| {
             row.select(anchors).any(|other| {
-                other.id() != link.id() && other.value().attr("href") == href && has_text(other)
+                other.id() != link.id()
+                    && other.value().attr("href") == Some(href)
+                    && has_text(other)
             })
         })
 }
@@ -179,10 +183,13 @@ fn compact_tables(markdown: &str) -> String {
         if cells.iter().all(|cell| cell.is_empty()) {
             continue;
         }
-        let cells: Vec<&str> = cells
-            .into_iter()
-            .map(|cell| if is_rule(cell) { "---" } else { cell })
-            .collect();
+        let separator = cells.iter().any(|cell| is_rule(cell))
+            && cells.iter().all(|cell| cell.is_empty() || is_rule(cell));
+        let cells: Vec<&str> = if separator {
+            vec!["---"; cells.len()]
+        } else {
+            cells
+        };
         lines.push(format!("| {} |", cells.join(" | ")));
     }
     lines.join("\n")
@@ -391,6 +398,32 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_rule_matches_on_href_and_spares_icon_headers() {
+        let md = html_to_markdown(
+            "<body><table><tr><th><a href=\"/w/Stab\" title=\"Stab\"><img src=\"/s.png\"></a></th>\
+             <th><a href=\"/w/Slash\" title=\"Slash\"><img src=\"/l.png\"></a></th></tr>\
+             <tr><td><a href=\"/w/Death_rune\" title=\"Death rune\"><img src=\"/d.png\"></a>\
+             <a href=\"/w/Death_rune\">Death rune</a></td>\
+             <td><a href=\"/w/Blood_rune\" title=\"Blood rune\"><img src=\"/b.png\"></a>\
+             <a href=\"/w/Blood_rune\">Blood rune</a></td></tr></table></body>",
+        );
+        assert!(
+            md.contains("| [Stab](/w/Stab) | [Slash](/w/Slash) |"),
+            "{md}"
+        );
+        assert_eq!(md.matches("[Death rune]").count(), 1, "{md}");
+        assert_eq!(md.matches("[Blood rune]").count(), 1, "{md}");
+    }
+
+    #[test]
+    fn separator_rows_stay_valid_when_a_column_is_empty() {
+        let md = html_to_markdown(
+            "<body><table><tr><th></th><th>Item</th></tr><tr><td></td><td>Ashes</td></tr></table></body>",
+        );
+        assert!(md.contains("| --- | --- |"), "{md}");
+    }
+
+    #[test]
     fn infobox_switch_data_is_dropped() {
         let md = html_to_markdown(
             "<div class=\"mw-parser-output\"><table class=\"infobox\"><tr><th>Attack</th><td>250</td></tr></table>\
@@ -413,7 +446,7 @@ mod tests {
              <tr><td colspan=\"2\"><img src=\"/i.png\"></td></tr>\
              <tr><th>Released</th><td>2024</td></tr><tr><th>Members</th><td>Yes</td></tr></table></body>",
         );
-        assert!(md.contains("Cache of runes"), "{md}");
+        assert!(md.starts_with("**Cache of runes**\n\n| Released |"), "{md}");
         assert!(!md.contains("| Cache of runes |"), "{md}");
         assert!(md.contains("| Released | 2024 |\n| --- | --- |"), "{md}");
         assert!(md.contains("| Members | Yes |"), "{md}");
