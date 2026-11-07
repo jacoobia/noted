@@ -5,6 +5,7 @@ use anyhow::{Result, bail};
 use url::Url;
 
 use crate::cache::{Entry, Store, now};
+use crate::config::require_user_agent;
 use crate::fetch::{Response, fetch};
 use crate::output::{emit, short_duration};
 use crate::view::{html_to_markdown, is_html, section};
@@ -40,7 +41,8 @@ pub fn run(store: &Store, args: &GetArgs) -> Result<ExitCode> {
         .unwrap_or(DEFAULT_TTL_SECS);
 
     let Some(mut entry) = cached else {
-        return match fetch(&key, None, None)? {
+        let agent = require_user_agent()?;
+        return match fetch(&key, &agent, None, None)? {
             response if is_success(response.status) => {
                 let entry = store_response(store, key, response, now, ttl_secs)?;
                 serve(&entry, "miss", now, args)
@@ -58,7 +60,13 @@ pub fn run(store: &Store, args: &GetArgs) -> Result<ExitCode> {
         return serve(&entry, "hit", now, args);
     }
 
-    match fetch(&key, entry.etag.as_deref(), entry.last_modified.as_deref()) {
+    let agent = require_user_agent()?;
+    match fetch(
+        &key,
+        &agent,
+        entry.etag.as_deref(),
+        entry.last_modified.as_deref(),
+    ) {
         Ok(response) if response.status == 304 => {
             store.touch(&key, now, ttl_secs)?;
             entry.fetched_at = now;

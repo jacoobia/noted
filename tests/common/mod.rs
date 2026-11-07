@@ -140,6 +140,14 @@ pub fn noted(db: &Path) -> Command {
     cmd
 }
 
+pub fn noted_process(db: &Path) -> std::process::Command {
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_noted"));
+    cmd.env("NOTED_DB", db)
+        .env("NOTED_CONFIG_DIR", config_dir(db))
+        .env("NOTED_USER_AGENT", TEST_AGENT);
+    cmd
+}
+
 pub fn config_dir(db: &Path) -> std::path::PathBuf {
     db.with_extension("config")
 }
