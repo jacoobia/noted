@@ -156,18 +156,34 @@ pub fn answer_once_then_reset(body: &'static str) -> String {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/page", listener.local_addr().unwrap());
     thread::spawn(move || {
-        let mut connections = listener.incoming();
-        if let Some(Ok(mut stream)) = connections.next() {
+        let mut answered = false;
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
             let mut request = [0; 4096];
-            let _ = std::io::Read::read(&mut stream, &mut request);
-            let reply = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
+            let read = std::io::Read::read(&mut stream, &mut request).unwrap_or(0);
+            let wants_robots = request[..read].starts_with(b"GET /robots.txt ");
+            let reply = if wants_robots {
+                "HTTP/1.1 404 Not Found
+Content-Length: 0
+Connection: close
+
+"
+                .to_owned()
+            } else if !answered {
+                answered = true;
+                format!(
+                    "HTTP/1.1 200 OK
+Content-Type: text/plain
+Content-Length: {}
+Connection: close
+
+{body}",
+                    body.len()
+                )
+            } else {
+                continue;
+            };
             let _ = std::io::Write::write_all(&mut stream, reply.as_bytes());
-        }
-        for stream in connections {
-            drop(stream);
         }
     });
     url

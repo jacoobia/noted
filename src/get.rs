@@ -8,9 +8,11 @@ use crate::cache::{Entry, Store, now};
 use crate::config::require_user_agent;
 use crate::fetch::{Response, fetch};
 use crate::output::{emit, short_duration};
+use crate::robots::{is_allowed, path_and_query, product_token, robots_url};
 use crate::view::{html_to_markdown, is_html, section};
 
 const DEFAULT_TTL_SECS: i64 = 24 * 60 * 60;
+const ROBOTS_TTL_SECS: i64 = 24 * 60 * 60;
 
 pub struct GetArgs {
     pub url: String,
@@ -42,6 +44,13 @@ pub fn run(store: &Store, args: &GetArgs) -> Result<ExitCode> {
 
     let Some(mut entry) = cached else {
         let agent = require_user_agent()?;
+        match check_robots(store, &key, &agent, now)? {
+            Robots::Allowed => {}
+            Robots::Disallowed(reason) => bail!(reason),
+            Robots::Unreachable(why) => {
+                bail!("couldn't check robots.txt ({why}), so nothing was fetched")
+            }
+        }
         return match fetch(&key, &agent, None, None)? {
             response if is_success(response.status) => {
                 let entry = store_response(store, key, response, now, ttl_secs)?;
@@ -61,6 +70,14 @@ pub fn run(store: &Store, args: &GetArgs) -> Result<ExitCode> {
     }
 
     let agent = require_user_agent()?;
+    match check_robots(store, &key, &agent, now)? {
+        Robots::Allowed => {}
+        Robots::Disallowed(reason) => bail!(reason),
+        Robots::Unreachable(why) => {
+            eprintln!("noted: couldn't check robots.txt ({why}), serving the stale copy");
+            return serve(&entry, "stale", now, args);
+        }
+    }
     match fetch(
         &key,
         &agent,
@@ -86,6 +103,54 @@ pub fn run(store: &Store, args: &GetArgs) -> Result<ExitCode> {
             serve(&entry, "stale", now, args)
         }
         Ok(response) => http_error(response.status, &response.body),
+    }
+}
+
+enum Robots {
+    Allowed,
+    Disallowed(String),
+    Unreachable(String),
+}
+
+fn check_robots(store: &Store, page: &str, agent: &str, now: i64) -> Result<Robots> {
+    let page = Url::parse(page)?;
+    if page.path() == "/robots.txt" {
+        return Ok(Robots::Allowed);
+    }
+    let url = robots_url(&page);
+    let origin = page.origin().ascii_serialization();
+    let cached = store.robots(&origin)?;
+    let rules = match cached {
+        Some((body, fetched_at)) if now < fetched_at.saturating_add(ROBOTS_TTL_SECS) => body,
+        stale => match fetch(&url, agent, None, None) {
+            Ok(response) if response.status < 500 => {
+                let body = if is_success(response.status) {
+                    String::from_utf8_lossy(&response.body).into_owned()
+                } else {
+                    String::new()
+                };
+                store.put_robots(&origin, &body, now)?;
+                body
+            }
+            Ok(response) => match stale {
+                Some((body, _)) => body,
+                None => return Ok(Robots::Unreachable(format!("HTTP {}", response.status))),
+            },
+            Err(err) => match stale {
+                Some((body, _)) => body,
+                None => return Ok(Robots::Unreachable(format!("{err:#}"))),
+            },
+        },
+    };
+    let token = product_token(agent);
+    let path = path_and_query(&page);
+    if is_allowed(&rules, token, &path) {
+        Ok(Robots::Allowed)
+    } else {
+        let host = page.host_str().unwrap_or_default();
+        Ok(Robots::Disallowed(format!(
+            "robots.txt on {host} disallows {path} for {token}, so nothing was fetched"
+        )))
     }
 }
 

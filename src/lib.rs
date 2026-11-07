@@ -5,4 +5,5 @@ pub mod get;
 pub mod hook;
 pub mod manage;
 pub mod output;
+pub mod robots;
 pub mod view;
