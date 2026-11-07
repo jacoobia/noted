@@ -276,7 +276,7 @@ fn serve(entry: &Entry, state: &str, now: i64, args: &GetArgs) -> Result<ExitCod
         } else {
             text.into_owned()
         };
-        let text = if args.format == Format::Plain {
+        let text = if html && args.format == Format::Plain {
             plain(&text)
         } else {
             text

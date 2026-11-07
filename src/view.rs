@@ -221,20 +221,9 @@ pub fn plain(markdown: &str) -> String {
         }
         if in_fence || fence {
             lines.push(line.to_owned());
-            continue;
+        } else {
+            lines.push(link_text(line));
         }
-        let unlinked: Vec<String> = line
-            .split('`')
-            .enumerate()
-            .map(|(i, part)| {
-                if i % 2 == 0 {
-                    link_text(part)
-                } else {
-                    part.to_owned()
-                }
-            })
-            .collect();
-        lines.push(unlinked.join("`"));
     }
     lines.join("\n")
 }
@@ -295,21 +284,93 @@ fn parse_heading(line: &str) -> Option<(usize, &str)> {
 }
 
 fn link_text(markdown: &str) -> String {
-    let mut text = String::new();
-    let mut rest = markdown;
-    while let Some(open) = rest.find('[') {
-        let Some((label, after)) = rest[open + 1..].split_once("](") else {
-            break;
-        };
-        let Some(close) = after.find(')') else {
-            break;
-        };
-        text.push_str(&rest[..open]);
-        text.push_str(label);
-        rest = &after[close + 1..];
+    let chars: Vec<char> = markdown.chars().collect();
+    let mut out = String::with_capacity(markdown.len());
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '\\' if i + 1 < chars.len() => {
+                out.extend(&chars[i..i + 2]);
+                i += 2;
+            }
+            '`' => {
+                let end = code_span_end(&chars, i).unwrap_or(i + backtick_run(&chars, i));
+                out.extend(&chars[i..end]);
+                i = end;
+            }
+            '[' => {
+                if let Some((label, end)) = inline_link(&chars, i) {
+                    out.push_str(&link_text(&label));
+                    i = end;
+                } else {
+                    out.push('[');
+                    i += 1;
+                }
+            }
+            ch => {
+                out.push(ch);
+                i += 1;
+            }
+        }
     }
-    text.push_str(rest);
-    text
+    out
+}
+
+fn backtick_run(chars: &[char], start: usize) -> usize {
+    chars[start..].iter().take_while(|&&c| c == '`').count()
+}
+
+fn code_span_end(chars: &[char], start: usize) -> Option<usize> {
+    let run = backtick_run(chars, start);
+    let mut i = start + run;
+    while i < chars.len() {
+        if chars[i] == '`' {
+            let closing = backtick_run(chars, i);
+            if closing == run {
+                return Some(i + closing);
+            }
+            i += closing;
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
+/// Returns the label and the index just past `[label](target)` when one starts at `start`.
+fn inline_link(chars: &[char], start: usize) -> Option<(String, usize)> {
+    let label_end = closing(chars, start, '[', ']')?;
+    if chars.get(label_end + 1) != Some(&'(') {
+        return None;
+    }
+    let target_end = closing(chars, label_end + 1, '(', ')')?;
+    Some((chars[start + 1..label_end].iter().collect(), target_end + 1))
+}
+
+fn closing(chars: &[char], open_at: usize, open: char, close: char) -> Option<usize> {
+    let mut depth = 0;
+    let mut i = open_at;
+    while i < chars.len() {
+        match chars[i] {
+            '\\' => i += 1,
+            '`' if open == '[' => {
+                if let Some(end) = code_span_end(chars, i) {
+                    i = end;
+                    continue;
+                }
+            }
+            c if c == open => depth += 1,
+            c if c == close => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
 }
 
 fn is_fence(line: &str) -> bool {
@@ -486,6 +547,23 @@ mod tests {
         assert!(!md.contains("| Cache of runes |"), "{md}");
         assert!(md.contains("| Released | 2024 |\n| --- | --- |"), "{md}");
         assert!(md.contains("| Members | Yes |"), "{md}");
+    }
+
+    #[test]
+    fn plain_handles_the_link_shapes_htmd_produces() {
+        let cases = [
+            (r"see [Foo](/w/Foo_\(bar\)) now", "see Foo now"),
+            ("use [`at()`](/at) here", "use `at()` here"),
+            (r"\[sic\] see [x](/u)", r"\[sic\] see x"),
+            ("a ` b [x](/u)", "a ` b x"),
+            ("keep `[a](b)` and [c](/d)", "keep `[a](b)` and c"),
+            ("[outer [inner] text](/u)", "outer [inner] text"),
+            ("no links here", "no links here"),
+        ];
+        for (markdown, expected) in cases {
+            assert_eq!(plain(markdown), expected, "{markdown}");
+        }
+        assert_eq!(plain("```\n[a](b)\n```\n[c](d)"), "```\n[a](b)\n```\nc");
     }
 
     #[test]

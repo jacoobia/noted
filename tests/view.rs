@@ -263,3 +263,22 @@ fn plain_strips_links_but_keeps_their_text_and_code() {
         .success()
         .stdout("## Drops\n");
 }
+
+#[test]
+fn plain_leaves_non_html_untouched_and_conflicts_with_raw() {
+    let server = TestServer::start(vec![(
+        "/api",
+        always(|| Reply::ok("application/json", "{\"link\":\"[a](b)\"}")),
+    )]);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    noted(&db)
+        .args(["get", "-q", "--plain", &server.url("/api")])
+        .assert()
+        .success()
+        .stdout("{\"link\":\"[a](b)\"}");
+    noted(&db)
+        .args(["get", "--plain", "--raw", &server.url("/api")])
+        .assert()
+        .code(64);
+}
