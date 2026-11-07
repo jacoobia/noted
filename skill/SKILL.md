@@ -31,9 +31,10 @@ noted get <url> --section "<heading>"
 ```
 
 - Pick `--ttl` from how often the source changes (table below). It is stored with the entry, so later reads can leave it out.
-- Use `--section` for long pages: it prints one heading and everything under it. When the heading is missing, noted exits 1 and lists the headings it found on stderr. Retry with one of those. To see a page's outline without reading it, ask for a heading that doesn't exist.
+- Use `--section` for long pages: it prints one heading and everything under it. When the heading is missing, noted exits 1 and lists the headings it found on stderr. Retry with one of those.
+- Use `--outline` to see a long page's headings before deciding what to read.
 - Pipe JSON straight into tools: `noted get <url> | jq .field`. Only HTML is converted, everything else comes back byte for byte. Add `--raw` when you need the original HTML.
-- stderr carries one status line, e.g. `noted: hit · age 3h · ttl 7d · 200 text/html`. `miss` is a first fetch, `hit` means it came from the cache, `refreshed` means the server sent a new copy, `revalidated` means the server confirmed nothing changed, and `stale` means the server was unreachable, timed out or returned a 5xx, so you got the cached copy.
+- stderr carries one status line, e.g. `noted: hit · age 3h · ttl 7d · 200 text/html · 18KB`. The size is the stored body, so you know how big a page is before reading it. `miss` is a first fetch, `hit` means it came from the cache, `refreshed` means the server sent a new copy, `revalidated` means the server confirmed nothing changed, and `stale` means the server was unreachable, timed out or returned a 5xx, so you got the cached copy.
 - Exit 1 with `noted: HTTP <code>` on stderr means the server returned an error (a 404 is usually a misspelt page name). Stdout is empty.
 - If the markdown comes back empty, the page probably renders with JavaScript. Check `--raw` to see what the server sent.
 - `robots.txt on <host> disallows <path>` means the site has asked agents like you not to fetch that page. Tell the user and leave the page alone; reaching for curl or another tool to get around it goes against what the site asked.

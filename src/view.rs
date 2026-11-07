@@ -211,6 +211,14 @@ struct Heading {
     title: String,
 }
 
+pub fn outline(text: &str) -> Vec<&str> {
+    let lines: Vec<&str> = text.lines().collect();
+    headings(&lines)
+        .iter()
+        .map(|heading| lines[heading.line])
+        .collect()
+}
+
 pub fn section(text: &str, heading: &str) -> Result<String, Vec<String>> {
     let lines: Vec<&str> = text.lines().collect();
     let headings = headings(&lines);

@@ -163,3 +163,23 @@ fn section_with_raw_still_reads_markdown() {
         .success()
         .stdout(predicate::str::starts_with("## Trivia"));
 }
+
+#[test]
+fn outline_lists_the_page_headings() {
+    let dir = TempDir::new().unwrap();
+    let server = wiki_server();
+    noted(&dir.path().join("c.db"))
+        .args(["get", "-q", "--outline", &server.url("/w/Abyssal_demon")])
+        .assert()
+        .success()
+        .stdout("## Drops\n### 100%\n## Trivia\n");
+}
+
+#[test]
+fn outline_and_section_cannot_be_combined() {
+    let dir = TempDir::new().unwrap();
+    noted(&dir.path().join("c.db"))
+        .args(["get", "--outline", "--section", "Drops", "https://a.io/"])
+        .assert()
+        .code(64);
+}

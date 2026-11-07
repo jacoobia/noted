@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::Result;
 use clap::{ArgGroup, Parser, Subcommand};
 use noted::cache::{Store, db_path};
-use noted::get::{self, GetArgs};
+use noted::get::{self, GetArgs, Select};
 use noted::{config, manage};
 
 #[derive(Parser)]
@@ -18,6 +18,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Fetch a URL, serving it from the cache while fresh
+    #[command(long_about = GET_HELP)]
     Get {
         url: String,
         /// How long the copy stays fresh, e.g. 30m, 7d (default 1d, or the stored TTL)
@@ -32,6 +33,9 @@ enum Command {
         /// Print only the section under this heading
         #[arg(long, value_parser = non_blank)]
         section: Option<String>,
+        /// Print only the page's headings
+        #[arg(long, conflicts_with = "section")]
+        outline: bool,
         /// Skip the status line on stderr
         #[arg(long, short)]
         quiet: bool,
@@ -57,12 +61,23 @@ enum Command {
         setting: Setting,
     },
     /// Handle a Claude Code pre-tool-use hook event from stdin
+    #[command(long_about = HOOK_HELP)]
     Hook,
 }
 
 /// Claude Code treats exit code 2 from a hook as "block this tool call", so usage errors
 /// use 64 (`EX_USAGE`) rather than clap's default of 2.
 const USAGE_ERROR: u8 = 64;
+
+const GET_HELP: &str = "Fetch a URL, serving it from the cache while fresh.
+
+A copy stays fresh for its TTL, which counts from the last time the server sent it or confirmed it unchanged (a 304). Once it goes stale, noted asks the server again. If the server can't be reached (offline, a timeout or a 5xx), you get the stale copy with a warning. A page that was never cached can't be fetched offline.
+
+Exit codes: 0 success, 1 an error or a robots.txt refusal, 3 no User-Agent set yet, 64 bad arguments.";
+
+const HOOK_HELP: &str = "Handle a Claude Code pre-tool-use hook event from stdin.
+
+Reads one PreToolUse event as JSON. Plain `curl <url>` Bash calls are rewritten to `noted get <url>`, and WebFetch calls are denied with a message pointing at noted. Anything else passes through untouched. To install, add it to ~/.claude/settings.json under hooks.PreToolUse with the matcher \"Bash|WebFetch\" and the command \"noted hook\". It always exits 0, so it can never block a tool call.";
 
 #[derive(Subcommand)]
 enum Setting {
@@ -109,10 +124,16 @@ fn run(command: Command) -> Result<ExitCode> {
             refresh,
             raw,
             section,
+            outline,
             quiet,
         } => {
             get::cache_key(&url)?;
             let store = Store::open(&db_path())?;
+            let select = match (section, outline) {
+                (Some(heading), _) => Select::Section(heading),
+                (None, true) => Select::Outline,
+                (None, false) => Select::Whole,
+            };
             get::run(
                 &store,
                 &GetArgs {
@@ -120,7 +141,7 @@ fn run(command: Command) -> Result<ExitCode> {
                     ttl,
                     refresh,
                     raw,
-                    section,
+                    select,
                     quiet,
                 },
             )
