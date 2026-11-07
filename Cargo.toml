@@ -2,6 +2,14 @@
 name = "noted"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.89"
+description = "A caching fetch CLI for agents: serves web pages and API responses from a local cache, as compact markdown"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jacoobia/noted"
+readme = "README.md"
+keywords = ["cache", "cli", "fetch", "agents", "markdown"]
+categories = ["command-line-utilities", "caching"]
+publish = false
 
 [dependencies]
 anyhow = "1.0.104"
@@ -31,3 +39,10 @@ module_name_repetitions = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 must_use_candidate = "allow"
+
+[profile.dist]
+inherits = "release"
+lto = "thin"
+
+[package.metadata.dist]
+dist = true

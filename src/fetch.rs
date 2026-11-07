@@ -61,9 +61,14 @@ fn timeout() -> Duration {
 }
 
 pub fn user_agent() -> String {
-    let base = concat!("noted/", env!("CARGO_PKG_VERSION"));
+    let base = concat!(
+        "noted/",
+        env!("CARGO_PKG_VERSION"),
+        " (+",
+        env!("CARGO_PKG_REPOSITORY")
+    );
     match std::env::var("NOTED_CONTACT") {
-        Ok(contact) if !contact.is_empty() => format!("{base} ({contact})"),
-        _ => base.to_owned(),
+        Ok(contact) if !contact.is_empty() => format!("{base}; {contact})"),
+        _ => format!("{base})"),
     }
 }
