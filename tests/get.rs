@@ -413,7 +413,7 @@ fn not_found_is_not_cached() {
             .args(["get", &server.url("/gone")])
             .assert()
             .code(1)
-            .stdout("missing")
+            .stdout("")
             .stderr(predicate::str::contains("noted: HTTP 404"));
     }
     assert_eq!(server.hits("/gone"), 2);
@@ -476,7 +476,7 @@ fn client_error_on_stale_entry_is_reported() {
         .args(args)
         .assert()
         .code(1)
-        .stdout("missing")
+        .stdout("")
         .stderr(predicate::str::contains("noted: HTTP 404"));
 }
 

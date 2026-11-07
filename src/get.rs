@@ -55,7 +55,7 @@ pub fn run(store: &Store, args: &GetArgs) -> Result<ExitCode> {
                 let entry = store_response(store, key, response, now, ttl_secs)?;
                 serve(&entry, "miss", now, args)
             }
-            Fetched::Page(response) => http_error(response.status, &response.body),
+            Fetched::Page(response) => Ok(http_error(response.status)),
         };
     };
 
@@ -100,7 +100,7 @@ pub fn run(store: &Store, args: &GetArgs) -> Result<ExitCode> {
             eprintln!("noted: {err:#}, serving the stale copy");
             serve(&entry, "stale", now, args)
         }
-        Ok(Fetched::Page(response)) => http_error(response.status, &response.body),
+        Ok(Fetched::Page(response)) => Ok(http_error(response.status)),
     }
 }
 
@@ -227,10 +227,9 @@ fn store_response(
     Ok(entry)
 }
 
-fn http_error(status: u16, body: &[u8]) -> Result<ExitCode> {
-    eprintln!("noted: HTTP {status}");
-    emit(body)?;
-    Ok(ExitCode::FAILURE)
+fn http_error(status: u16) -> ExitCode {
+    eprintln!("noted: HTTP {status}, nothing printed or cached");
+    ExitCode::FAILURE
 }
 
 fn serve(entry: &Entry, state: &str, now: i64, args: &GetArgs) -> Result<ExitCode> {
