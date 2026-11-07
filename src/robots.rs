@@ -28,6 +28,7 @@ pub fn is_allowed(robots_txt: &str, token: &str, path: &str) -> bool {
     if path == "/robots.txt" {
         return true;
     }
+    let path = normalise(path);
     let groups = parse(robots_txt);
     let named: Vec<&Group> = groups
         .iter()
@@ -44,7 +45,7 @@ pub fn is_allowed(robots_txt: &str, token: &str, path: &str) -> bool {
     chosen
         .iter()
         .flat_map(|group| &group.rules)
-        .filter(|rule| !rule.pattern.is_empty() && pattern_matches(&rule.pattern, path))
+        .filter(|rule| !rule.pattern.is_empty() && pattern_matches(&rule.pattern, &path))
         .max_by_key(|rule| (rule.pattern.len(), rule.allow))
         .is_none_or(|rule| rule.allow)
 }
@@ -87,7 +88,7 @@ fn parse(robots_txt: &str) -> Vec<Group> {
                 if let Some(group) = groups.last_mut() {
                     group.rules.push(Rule {
                         allow: key == "allow",
-                        pattern: value.to_owned(),
+                        pattern: normalise(value),
                     });
                 }
                 collecting_agents = false;
@@ -96,6 +97,44 @@ fn parse(robots_txt: &str) -> Vec<Group> {
         }
     }
     groups
+}
+
+/// RFC 9309 compares paths and rules after percent-encoding both the same way, so non-ASCII
+/// is encoded, escape hex is uppercased and escaped unreserved characters are decoded.
+fn normalise(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let byte = bytes[i];
+        let escaped = (byte == b'%')
+            .then(|| text.get(i + 1..i + 3))
+            .flatten()
+            .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+        if let Some(value) = escaped {
+            if value.is_ascii_alphanumeric() || b"-._~".contains(&value) {
+                out.push(char::from(value));
+            } else {
+                push_escape(&mut out, value);
+            }
+            i += 3;
+        } else {
+            if byte.is_ascii() {
+                out.push(char::from(byte));
+            } else {
+                push_escape(&mut out, byte);
+            }
+            i += 1;
+        }
+    }
+    out
+}
+
+fn push_escape(out: &mut String, byte: u8) {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    out.push('%');
+    out.push(char::from(HEX[usize::from(byte >> 4)]));
+    out.push(char::from(HEX[usize::from(byte & 0x0f)]));
 }
 
 fn pattern_matches(pattern: &str, path: &str) -> bool {
@@ -205,6 +244,15 @@ mod tests {
         let robots = "\u{feff}# site rules\r\nUser-agent: * # everyone\r\nCrawl-delay: 5\r\nSitemap: https://a.io/s.xml\r\nDisallow: /secret # keep out\r\n";
         assert!(!is_allowed(robots, "Bot", "/secret/1"));
         assert!(is_allowed(robots, "Bot", "/public"));
+    }
+
+    #[test]
+    fn rules_and_paths_compare_in_one_encoding() {
+        let robots = "User-agent: *\nDisallow: /café\nDisallow: /a%2fb\nDisallow: /%7Euser\n";
+        assert!(!is_allowed(robots, "Bot", "/caf%C3%A9/menu"));
+        assert!(!is_allowed(robots, "Bot", "/a%2Fb"));
+        assert!(!is_allowed(robots, "Bot", "/~user/home"));
+        assert!(is_allowed(robots, "Bot", "/a/b"));
     }
 
     #[test]
