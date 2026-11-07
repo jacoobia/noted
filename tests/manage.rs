@@ -129,3 +129,23 @@ fn rm_invalid_url_removes_nothing() {
         .failure();
     assert!(stdout_of(&db, &["ls"]).contains("/a"));
 }
+
+#[test]
+fn rm_all_leaves_no_page_bytes_on_disk() {
+    let marker = "SECRET-MARKER-5f3a9c";
+    let server = TestServer::start(vec![(
+        "/secret",
+        always(move || Reply::ok("text/plain", marker.repeat(200))),
+    )]);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    fetch(&db, &server.url("/secret"), "1d");
+    stdout_of(&db, &["rm", "--all"]);
+    for file in ["c.db", "c.db-wal"] {
+        let path = dir.path().join(file);
+        if let Ok(bytes) = std::fs::read(&path) {
+            let text = String::from_utf8_lossy(&bytes);
+            assert!(!text.contains(marker), "{file} still holds the page");
+        }
+    }
+}

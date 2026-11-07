@@ -106,8 +106,12 @@ fn sends_user_agent() {
         .args(["get", &server.url("/page")])
         .assert()
         .success();
+    let version = env!("CARGO_PKG_VERSION");
     let agent = server.last_header("/page", "User-Agent").unwrap();
-    assert!(agent.starts_with("noted/"), "{agent}");
+    assert_eq!(
+        agent,
+        format!("noted/{version} (+https://github.com/jacoobia/noted)")
+    );
 
     noted(&db)
         .env("NOTED_CONTACT", "me@x")
@@ -115,9 +119,9 @@ fn sends_user_agent() {
         .assert()
         .success();
     let agent = server.last_header("/page", "User-Agent").unwrap();
-    assert!(
-        agent.starts_with("noted/") && agent.ends_with("(me@x)"),
-        "{agent}"
+    assert_eq!(
+        agent,
+        format!("noted/{version} (+https://github.com/jacoobia/noted; me@x)")
     );
 }
 

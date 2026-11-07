@@ -1,12 +1,15 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use rusqlite::{Connection, OptionalExtension, Row, params};
+use rusqlite::{Connection, ErrorCode, OptionalExtension, Row, params};
+
+const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 const SCHEMA: &str = "
-    PRAGMA journal_mode = WAL;
+    PRAGMA secure_delete = ON;
     CREATE TABLE IF NOT EXISTS entries (
         url TEXT PRIMARY KEY,
         status INTEGER NOT NULL,
@@ -78,7 +81,8 @@ impl Store {
             fs::create_dir_all(parent)?;
         }
         let conn = Connection::open(path)?;
-        conn.busy_timeout(Duration::from_secs(5))?;
+        conn.busy_timeout(BUSY_TIMEOUT)?;
+        enable_wal(&conn)?;
         conn.execute_batch(SCHEMA)?;
         Ok(Self { conn })
     }
@@ -146,21 +150,49 @@ impl Store {
     }
 
     pub fn remove(&self, url: &str) -> Result<bool> {
-        Ok(self
+        let removed = self
             .conn
-            .execute("DELETE FROM entries WHERE url = ?1", [url])?
-            > 0)
+            .execute("DELETE FROM entries WHERE url = ?1", [url])?;
+        self.flush_wal()?;
+        Ok(removed > 0)
     }
 
     pub fn remove_stale(&self, now: i64) -> Result<usize> {
-        Ok(self.conn.execute(
+        let removed = self.conn.execute(
             "DELETE FROM entries WHERE fetched_at + ttl_secs <= ?1",
             [now],
-        )?)
+        )?;
+        self.flush_wal()?;
+        Ok(removed)
     }
 
     pub fn clear(&self) -> Result<usize> {
-        Ok(self.conn.execute("DELETE FROM entries", [])?)
+        let removed = self.conn.execute("DELETE FROM entries", [])?;
+        self.flush_wal()?;
+        Ok(removed)
+    }
+
+    fn flush_wal(&self) -> Result<()> {
+        self.conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))?;
+        Ok(())
+    }
+}
+
+/// When several processes open a new cache at once, they race to switch it to WAL. SQLite
+/// answers the losers with `SQLITE_BUSY` straight away instead of using the busy handler, so the
+/// switch is retried here for as long as the busy timeout would have waited.
+fn enable_wal(conn: &Connection) -> Result<()> {
+    let deadline = Instant::now() + BUSY_TIMEOUT;
+    loop {
+        match conn.execute_batch("PRAGMA journal_mode = WAL;") {
+            Err(rusqlite::Error::SqliteFailure(err, _))
+                if err.code == ErrorCode::DatabaseBusy && Instant::now() < deadline =>
+            {
+                thread::sleep(Duration::from_millis(10));
+            }
+            result => return Ok(result?),
+        }
     }
 }
 
