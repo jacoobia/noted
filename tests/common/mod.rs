@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -56,6 +57,11 @@ impl Seen {
 }
 
 pub type Handler = Box<dyn Fn(&Seen) -> Reply + Send + Sync>;
+
+pub fn counting(reply: impl Fn(usize) -> Reply + Send + Sync + 'static) -> Handler {
+    let calls = AtomicUsize::new(0);
+    Box::new(move |_| reply(calls.fetch_add(1, Ordering::SeqCst) + 1))
+}
 
 pub fn always(reply: impl Fn() -> Reply + Send + Sync + 'static) -> Handler {
     Box::new(move |_| reply())

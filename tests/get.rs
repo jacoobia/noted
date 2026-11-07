@@ -1,9 +1,10 @@
 mod common;
 
 use std::process::Stdio;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
-use common::{Handler, Reply, Seen, TEST_AGENT, TestServer, always, answer_once_then_reset, noted};
+use common::{
+    Reply, Seen, TEST_AGENT, TestServer, always, answer_once_then_reset, counting, noted,
+};
 use predicates::prelude::*;
 use tempfile::TempDir;
 
@@ -193,11 +194,6 @@ fn concurrent_processes_succeed() {
         .stdout
         .clone();
     assert_eq!(String::from_utf8(listing).unwrap().lines().count(), 8);
-}
-
-fn counting(reply: impl Fn(usize) -> Reply + Send + Sync + 'static) -> Handler {
-    let calls = AtomicUsize::new(0);
-    Box::new(move |_| reply(calls.fetch_add(1, Ordering::SeqCst) + 1))
 }
 
 #[test]

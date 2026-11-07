@@ -183,3 +183,70 @@ fn redirect_to_an_allowed_path_is_followed_and_cached_under_the_original_url() {
         .stderr(predicate::str::contains("noted: hit"));
     assert_eq!(moved.hits("/old"), 1);
 }
+
+#[test]
+fn unreachable_robots_txt_serves_a_stale_page() {
+    let server = TestServer::start(vec![
+        (
+            "/robots.txt",
+            common::counting(|n| {
+                if n == 1 {
+                    Reply::status(404)
+                } else {
+                    Reply::status(503)
+                }
+            }),
+        ),
+        ("/page", always(|| Reply::ok("text/plain", "cached copy"))),
+    ]);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    noted(&db)
+        .args(["get", "--ttl", "0s", &server.url("/page")])
+        .assert()
+        .success();
+    rusqlite::Connection::open(&db)
+        .unwrap()
+        .execute("DELETE FROM robots", [])
+        .unwrap();
+    noted(&db)
+        .args(["get", &server.url("/page")])
+        .assert()
+        .success()
+        .stdout("cached copy")
+        .stderr(
+            predicate::str::contains("couldn't check robots.txt")
+                .and(predicate::str::contains("noted: stale")),
+        );
+    assert_eq!(server.hits("/page"), 1);
+}
+
+#[test]
+fn agents_sharing_a_cache_get_their_own_robots_verdict() {
+    let server = TestServer::start(vec![
+        (
+            "/robots.txt",
+            always(|| {
+                Reply::ok(
+                    "text/plain",
+                    "User-agent: AgentA\nDisallow: /p\n\nUser-agent: *\nAllow: /\n",
+                )
+            }),
+        ),
+        ("/p", always(|| Reply::ok("text/plain", "page"))),
+    ]);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    noted(&db)
+        .env("NOTED_USER_AGENT", "AgentA/1.0")
+        .args(["get", &server.url("/p")])
+        .assert()
+        .code(1);
+    noted(&db)
+        .env("NOTED_USER_AGENT", "AgentB/1.0")
+        .args(["get", &server.url("/p")])
+        .assert()
+        .success()
+        .stdout("page");
+    assert_eq!(server.hits("/robots.txt"), 1);
+}
