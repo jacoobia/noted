@@ -228,6 +228,9 @@ fn rate_setting(host: Option<&str>, gap: Option<Duration>) -> Result<ExitCode> {
             let _ = writeln!(listing, "{known} {}", humantime::format_duration(gap));
         }
     }
+    if let (Some(host), true) = (host, listing.is_empty()) {
+        eprintln!("noted: no override for {host}");
+    }
     noted::output::emit(listing.as_bytes())?;
     Ok(ExitCode::SUCCESS)
 }

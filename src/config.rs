@@ -118,25 +118,47 @@ impl std::fmt::Display for SetupNeeded {
 
 impl std::error::Error for SetupNeeded {}
 
-pub fn rate_overrides() -> Result<Vec<(String, Duration)>> {
-    let path = config_dir().join("rate-limits");
+struct RateFile {
+    overrides: Vec<(String, Duration)>,
+    unreadable: Vec<String>,
+}
+
+fn read_rate_file() -> Result<RateFile> {
+    let path = rate_limits_path();
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(err) => return Err(err).with_context(|| format!("reading {}", path.display())),
     };
-    let mut overrides: Vec<(String, Duration)> = text
-        .lines()
-        .filter_map(|line| {
-            let (host, millis) = line.split_once(' ')?;
-            Some((
-                host.to_owned(),
-                Duration::from_millis(millis.trim().parse().ok()?),
-            ))
-        })
-        .collect();
-    overrides.sort();
-    Ok(overrides)
+    let mut file = RateFile {
+        overrides: Vec::new(),
+        unreadable: Vec::new(),
+    };
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let parsed = line
+            .trim()
+            .split_once(char::is_whitespace)
+            .and_then(|(host, gap)| {
+                let host = validate_host(host).ok()?;
+                let gap = humantime::parse_duration(gap.trim()).ok()?;
+                Some((host, gap))
+            });
+        if let Some(entry) = parsed {
+            file.overrides.push(entry);
+        } else {
+            eprintln!(
+                "noted: ignoring unreadable line in {}: {line}",
+                path.display()
+            );
+            file.unreadable.push(line.to_owned());
+        }
+    }
+    file.overrides.sort();
+    Ok(file)
+}
+
+pub fn rate_overrides() -> Result<Vec<(String, Duration)>> {
+    Ok(read_rate_file()?.overrides)
 }
 
 pub fn rate_for(host: &str) -> Result<Option<Duration>> {
@@ -148,7 +170,9 @@ pub fn rate_for(host: &str) -> Result<Option<Duration>> {
 }
 
 pub fn set_rate(host: &str, gap: Duration) -> Result<()> {
-    let mut overrides: Vec<_> = rate_overrides()?
+    let file = read_rate_file()?;
+    let mut overrides: Vec<_> = file
+        .overrides
         .into_iter()
         .filter(|(known, _)| known != host)
         .collect();
@@ -156,23 +180,33 @@ pub fn set_rate(host: &str, gap: Duration) -> Result<()> {
         overrides.push((host.to_owned(), gap));
         overrides.sort();
     }
-    let path = config_dir().join("rate-limits");
+    let mut text = String::new();
+    for (host, gap) in &overrides {
+        let _ = writeln!(text, "{host} {}", humantime::format_duration(*gap));
+    }
+    for line in &file.unreadable {
+        let _ = writeln!(text, "{line}");
+    }
+    let path = rate_limits_path();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let mut text = String::new();
-    for (host, gap) in &overrides {
-        let _ = writeln!(text, "{host} {}", gap.as_millis());
-    }
-    fs::write(&path, text).with_context(|| format!("writing {}", path.display()))
+    let partial = path.with_extension("partial");
+    fs::write(&partial, text).with_context(|| format!("writing {}", partial.display()))?;
+    fs::rename(&partial, &path).with_context(|| format!("replacing {}", path.display()))
 }
 
 pub fn validate_host(value: &str) -> Result<String, String> {
-    let host = value.trim().to_ascii_lowercase();
-    match url::Host::parse(&host) {
-        Ok(_) if !host.is_empty() && !host.contains([' ', '/', ':']) => Ok(host),
-        _ => Err("must be a host name like oldschool.runescape.wiki".to_owned()),
-    }
+    let value = value.trim();
+    let host = (!value.is_empty() && !value.contains([' ', '/']))
+        .then(|| url::Host::parse(&value.to_ascii_lowercase()).ok())
+        .flatten();
+    host.map(|host| host.to_string())
+        .ok_or_else(|| "must be a host name like oldschool.runescape.wiki".to_owned())
+}
+
+fn rate_limits_path() -> PathBuf {
+    config_dir().join("rate-limits")
 }
 
 fn user_agent_path() -> PathBuf {
