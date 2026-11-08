@@ -21,6 +21,10 @@ const SCHEMA: &str = "
         ttl_secs INTEGER NOT NULL,
         hits INTEGER NOT NULL DEFAULT 0
     );
+    CREATE TABLE IF NOT EXISTS slots (
+        host TEXT PRIMARY KEY,
+        next_at_ms INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS robots (
         origin TEXT PRIMARY KEY,
         body TEXT NOT NULL,
@@ -74,6 +78,12 @@ impl Listing {
     pub fn is_fresh(&self, now: i64) -> bool {
         is_fresh(self.fetched_at, self.ttl_secs, now)
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Slot {
+    Booked { wait_ms: i64 },
+    TooFar { wait_ms: i64 },
 }
 
 pub struct Store {
@@ -190,6 +200,42 @@ impl Store {
         Ok(())
     }
 
+    pub fn reserve_slot(
+        &self,
+        host: &str,
+        gap_ms: i64,
+        now_ms: i64,
+        max_wait_ms: i64,
+    ) -> Result<Slot> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let booked = self.book_slot(host, gap_ms, now_ms, max_wait_ms);
+        let end = if booked.is_ok() { "COMMIT" } else { "ROLLBACK" };
+        self.conn.execute_batch(end)?;
+        booked
+    }
+
+    fn book_slot(&self, host: &str, gap_ms: i64, now_ms: i64, max_wait_ms: i64) -> Result<Slot> {
+        let next_at: i64 = self
+            .conn
+            .query_row(
+                "SELECT next_at_ms FROM slots WHERE host = ?1",
+                [host],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(now_ms);
+        let slot_at = next_at.max(now_ms);
+        let wait_ms = slot_at - now_ms;
+        if wait_ms > max_wait_ms {
+            return Ok(Slot::TooFar { wait_ms });
+        }
+        self.conn.execute(
+            "INSERT OR REPLACE INTO slots (host, next_at_ms) VALUES (?1, ?2)",
+            params![host, slot_at.saturating_add(gap_ms)],
+        )?;
+        Ok(Slot::Booked { wait_ms })
+    }
+
     pub fn clear(&self) -> Result<usize> {
         self.conn.execute("DELETE FROM robots", [])?;
         let removed = self.conn.execute("DELETE FROM entries", [])?;
@@ -237,6 +283,12 @@ pub fn db_path() -> PathBuf {
             },
             PathBuf::from,
         )
+}
+
+pub fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis().try_into().unwrap_or(i64::MAX))
 }
 
 pub fn now() -> i64 {
@@ -355,6 +407,32 @@ mod tests {
         assert_eq!(store.clear().unwrap(), 1);
         assert_eq!(store.robots("https://a.io").unwrap(), None);
         assert!(store.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn slots_queue_up_and_refuse_long_waits_without_booking() {
+        let (_dir, store) = store();
+        let host = "a.io";
+        assert_eq!(
+            store.reserve_slot(host, 1000, 0, 5000).unwrap(),
+            Slot::Booked { wait_ms: 0 }
+        );
+        assert_eq!(
+            store.reserve_slot(host, 1000, 0, 5000).unwrap(),
+            Slot::Booked { wait_ms: 1000 }
+        );
+        assert_eq!(
+            store.reserve_slot(host, 1000, 0, 500).unwrap(),
+            Slot::TooFar { wait_ms: 2000 }
+        );
+        assert_eq!(
+            store.reserve_slot(host, 1000, 0, 5000).unwrap(),
+            Slot::Booked { wait_ms: 2000 }
+        );
+        assert_eq!(
+            store.reserve_slot("b.io", 1000, 0, 5000).unwrap(),
+            Slot::Booked { wait_ms: 0 }
+        );
     }
 
     #[test]
