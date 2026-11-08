@@ -4,7 +4,9 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use rusqlite::{Connection, ErrorCode, OptionalExtension, Row, params};
+use rusqlite::{
+    Connection, ErrorCode, OptionalExtension, Row, Transaction, TransactionBehavior, params,
+};
 
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -21,9 +23,9 @@ const SCHEMA: &str = "
         ttl_secs INTEGER NOT NULL,
         hits INTEGER NOT NULL DEFAULT 0
     );
-    CREATE TABLE IF NOT EXISTS slots (
+    CREATE TABLE IF NOT EXISTS host_slots (
         host TEXT PRIMARY KEY,
-        next_at_ms INTEGER NOT NULL
+        last_at_ms INTEGER NOT NULL
     );
     CREATE TABLE IF NOT EXISTS robots (
         origin TEXT PRIMARY KEY,
@@ -200,44 +202,30 @@ impl Store {
         Ok(())
     }
 
-    pub fn reserve_slot(
+    pub fn reserve_slot(&self, host: &str, gap_ms: i64, max_wait_ms: i64) -> Result<Slot> {
+        let tx = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
+        let slot = book_slot(&tx, host, gap_ms, now_ms(), max_wait_ms)?;
+        tx.commit()?;
+        Ok(slot)
+    }
+
+    #[cfg(test)]
+    fn reserve_slot_at(
         &self,
         host: &str,
         gap_ms: i64,
         now_ms: i64,
         max_wait_ms: i64,
     ) -> Result<Slot> {
-        self.conn.execute_batch("BEGIN IMMEDIATE")?;
-        let booked = self.book_slot(host, gap_ms, now_ms, max_wait_ms);
-        let end = if booked.is_ok() { "COMMIT" } else { "ROLLBACK" };
-        self.conn.execute_batch(end)?;
-        booked
-    }
-
-    fn book_slot(&self, host: &str, gap_ms: i64, now_ms: i64, max_wait_ms: i64) -> Result<Slot> {
-        let next_at: i64 = self
-            .conn
-            .query_row(
-                "SELECT next_at_ms FROM slots WHERE host = ?1",
-                [host],
-                |row| row.get(0),
-            )
-            .optional()?
-            .unwrap_or(now_ms);
-        let slot_at = next_at.max(now_ms);
-        let wait_ms = slot_at - now_ms;
-        if wait_ms > max_wait_ms {
-            return Ok(Slot::TooFar { wait_ms });
-        }
-        self.conn.execute(
-            "INSERT OR REPLACE INTO slots (host, next_at_ms) VALUES (?1, ?2)",
-            params![host, slot_at.saturating_add(gap_ms)],
-        )?;
-        Ok(Slot::Booked { wait_ms })
+        let tx = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
+        let slot = book_slot(&tx, host, gap_ms, now_ms, max_wait_ms)?;
+        tx.commit()?;
+        Ok(slot)
     }
 
     pub fn clear(&self) -> Result<usize> {
         self.conn.execute("DELETE FROM robots", [])?;
+        self.conn.execute("DELETE FROM host_slots", [])?;
         let removed = self.conn.execute("DELETE FROM entries", [])?;
         self.flush_wal()?;
         Ok(removed)
@@ -283,6 +271,32 @@ pub fn db_path() -> PathBuf {
             },
             PathBuf::from,
         )
+}
+
+fn book_slot(
+    conn: &Connection,
+    host: &str,
+    gap_ms: i64,
+    now_ms: i64,
+    max_wait_ms: i64,
+) -> Result<Slot> {
+    let last_at: Option<i64> = conn
+        .query_row(
+            "SELECT last_at_ms FROM host_slots WHERE host = ?1",
+            [host],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let slot_at = last_at.map_or(now_ms, |last| last.saturating_add(gap_ms).max(now_ms));
+    let wait_ms = slot_at - now_ms;
+    if wait_ms > max_wait_ms {
+        return Ok(Slot::TooFar { wait_ms });
+    }
+    conn.execute(
+        "INSERT OR REPLACE INTO host_slots (host, last_at_ms) VALUES (?1, ?2)",
+        params![host, slot_at],
+    )?;
+    Ok(Slot::Booked { wait_ms })
 }
 
 pub fn now_ms() -> i64 {
@@ -412,25 +426,31 @@ mod tests {
     #[test]
     fn slots_queue_up_and_refuse_long_waits_without_booking() {
         let (_dir, store) = store();
-        let host = "a.io";
+        let book = |host, gap, now, max| store.reserve_slot_at(host, gap, now, max).unwrap();
+        assert_eq!(book("a.io", 1000, 0, 5000), Slot::Booked { wait_ms: 0 });
+        assert_eq!(book("a.io", 1000, 0, 5000), Slot::Booked { wait_ms: 1000 });
+        assert_eq!(book("a.io", 1000, 0, 500), Slot::TooFar { wait_ms: 2000 });
+        assert_eq!(book("a.io", 1000, 0, 5000), Slot::Booked { wait_ms: 2000 });
+        assert_eq!(book("b.io", 1000, 0, 5000), Slot::Booked { wait_ms: 0 });
+    }
+
+    #[test]
+    fn a_changed_gap_applies_to_the_next_booking() {
+        let (_dir, store) = store();
+        store.reserve_slot_at("a.io", 60_000, 0, 5000).unwrap();
         assert_eq!(
-            store.reserve_slot(host, 1000, 0, 5000).unwrap(),
-            Slot::Booked { wait_ms: 0 }
-        );
-        assert_eq!(
-            store.reserve_slot(host, 1000, 0, 5000).unwrap(),
+            store.reserve_slot_at("a.io", 1000, 0, 5000).unwrap(),
             Slot::Booked { wait_ms: 1000 }
         );
+    }
+
+    #[test]
+    fn clear_resets_slots() {
+        let (_dir, store) = store();
+        store.reserve_slot_at("a.io", 60_000, 0, 5000).unwrap();
+        store.clear().unwrap();
         assert_eq!(
-            store.reserve_slot(host, 1000, 0, 500).unwrap(),
-            Slot::TooFar { wait_ms: 2000 }
-        );
-        assert_eq!(
-            store.reserve_slot(host, 1000, 0, 5000).unwrap(),
-            Slot::Booked { wait_ms: 2000 }
-        );
-        assert_eq!(
-            store.reserve_slot("b.io", 1000, 0, 5000).unwrap(),
+            store.reserve_slot_at("a.io", 60_000, 0, 5000).unwrap(),
             Slot::Booked { wait_ms: 0 }
         );
     }

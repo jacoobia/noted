@@ -41,7 +41,7 @@ enum Command {
         #[arg(long, conflicts_with = "section")]
         outline: bool,
         /// Longest to wait for a rate-limited host before giving up with exit code 4
-        #[arg(long, value_parser = humantime::parse_duration, default_value = "90s")]
+        #[arg(long, value_parser = humantime::parse_duration, default_value = "60s")]
         max_wait: Duration,
         /// Skip the status line on stderr
         #[arg(long, short)]

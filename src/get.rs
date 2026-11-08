@@ -1,11 +1,11 @@
 use std::process::ExitCode;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 use url::Url;
 
-use crate::cache::{Entry, Slot, Store, now, now_ms};
+use crate::cache::{Entry, Slot, Store, now};
 use crate::config::{rate_for, require_user_agent};
 use crate::fetch::{Response, fetch};
 use crate::output::{emit, short_duration, short_size};
@@ -16,6 +16,7 @@ const DEFAULT_TTL_SECS: i64 = 24 * 60 * 60;
 const ROBOTS_TTL_SECS: i64 = 24 * 60 * 60;
 const ROBOTS_REDIRECTS: u32 = 5;
 const MAX_PAGE_REDIRECTS: u32 = 10;
+const MAX_CRAWL_DELAY: Duration = Duration::from_secs(60);
 
 pub struct GetArgs {
     pub url: String,
@@ -103,6 +104,10 @@ pub fn run(store: &Store, args: &GetArgs) -> Result<ExitCode> {
             eprintln!("noted: HTTP {}, serving the stale copy", response.status);
             serve(&entry, "stale", now, args)
         }
+        Err(err) if err.is::<RateLimited>() && !args.refresh => {
+            eprintln!("noted: {err}, serving the stale copy");
+            serve(&entry, "stale", now, args)
+        }
         Err(err) if is_too_large(&err) || err.is::<RateLimited>() => Err(err),
         Err(err) => {
             eprintln!("noted: {err:#}, serving the stale copy");
@@ -147,7 +152,7 @@ struct Session<'a> {
     store: &'a Store,
     agent: String,
     now: i64,
-    max_wait: Duration,
+    deadline: Instant,
     quiet: bool,
 }
 
@@ -157,7 +162,7 @@ impl<'a> Session<'a> {
             store,
             agent: require_user_agent()?,
             now,
-            max_wait: args.max_wait,
+            deadline: Instant::now() + args.max_wait,
             quiet: args.quiet,
         })
     }
@@ -213,7 +218,6 @@ impl<'a> Session<'a> {
                         ))));
                     }
                 },
-                Err(err) if err.is::<RateLimited>() => return Err(err),
                 Err(err) => match stale {
                     Some((body, _)) => body,
                     None => return Ok(Some(Blocked::Unreachable(format!("{err:#}")))),
@@ -251,9 +255,8 @@ impl<'a> Session<'a> {
         let Some(gap) = self.gap_for(&page, host)? else {
             return Ok(());
         };
-        let slot = self
-            .store
-            .reserve_slot(host, millis(gap), now_ms(), millis(self.max_wait))?;
+        let left = self.deadline.saturating_duration_since(Instant::now());
+        let slot = self.store.reserve_slot(host, millis(gap), millis(left))?;
         match slot {
             Slot::Booked { wait_ms } if wait_ms > 0 => {
                 let wait = Duration::from_millis(wait_ms.unsigned_abs());
@@ -284,6 +287,7 @@ impl<'a> Session<'a> {
             .store
             .robots(&origin)?
             .and_then(|(rules, _)| crawl_delay(&rules, product_token(&self.agent)))
+            .map(|gap| gap.min(MAX_CRAWL_DELAY))
             .filter(|gap| !gap.is_zero()))
     }
 }
