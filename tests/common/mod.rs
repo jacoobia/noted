@@ -44,6 +44,7 @@ impl Reply {
 
 pub struct Seen {
     pub path: String,
+    pub at: std::time::Instant,
     pub headers: Vec<(String, String)>,
 }
 
@@ -84,6 +85,7 @@ impl TestServer {
                 let path = request.url().split('?').next().unwrap_or("").to_owned();
                 let record = Seen {
                     path: path.clone(),
+                    at: std::time::Instant::now(),
                     headers: request
                         .headers()
                         .iter()
@@ -117,6 +119,19 @@ impl TestServer {
             .iter()
             .filter(|s| s.path == path)
             .count()
+    }
+
+    pub fn arrival_times(&self, prefix: &str) -> Vec<std::time::Instant> {
+        let mut times: Vec<_> = self
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|s| s.path.starts_with(prefix))
+            .map(|s| s.at)
+            .collect();
+        times.sort();
+        times
     }
 
     pub fn last_header(&self, path: &str, name: &str) -> Option<String> {

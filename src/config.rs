@@ -1,5 +1,7 @@
+use std::fmt::Write;
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 
@@ -116,7 +118,68 @@ impl std::fmt::Display for SetupNeeded {
 
 impl std::error::Error for SetupNeeded {}
 
+pub fn rate_overrides() -> Result<Vec<(String, Duration)>> {
+    let path = config_dir().join("rate-limits");
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err).with_context(|| format!("reading {}", path.display())),
+    };
+    let mut overrides: Vec<(String, Duration)> = text
+        .lines()
+        .filter_map(|line| {
+            let (host, millis) = line.split_once(' ')?;
+            Some((
+                host.to_owned(),
+                Duration::from_millis(millis.trim().parse().ok()?),
+            ))
+        })
+        .collect();
+    overrides.sort();
+    Ok(overrides)
+}
+
+pub fn rate_for(host: &str) -> Result<Option<Duration>> {
+    let host = host.to_ascii_lowercase();
+    Ok(rate_overrides()?
+        .into_iter()
+        .find(|(known, _)| *known == host)
+        .map(|(_, gap)| gap))
+}
+
+pub fn set_rate(host: &str, gap: Duration) -> Result<()> {
+    let mut overrides: Vec<_> = rate_overrides()?
+        .into_iter()
+        .filter(|(known, _)| known != host)
+        .collect();
+    if !gap.is_zero() {
+        overrides.push((host.to_owned(), gap));
+        overrides.sort();
+    }
+    let path = config_dir().join("rate-limits");
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut text = String::new();
+    for (host, gap) in &overrides {
+        let _ = writeln!(text, "{host} {}", gap.as_millis());
+    }
+    fs::write(&path, text).with_context(|| format!("writing {}", path.display()))
+}
+
+pub fn validate_host(value: &str) -> Result<String, String> {
+    let host = value.trim().to_ascii_lowercase();
+    match url::Host::parse(&host) {
+        Ok(_) if !host.is_empty() && !host.contains([' ', '/', ':']) => Ok(host),
+        _ => Err("must be a host name like oldschool.runescape.wiki".to_owned()),
+    }
+}
+
 fn user_agent_path() -> PathBuf {
+    config_dir().join("user-agent")
+}
+
+fn config_dir() -> PathBuf {
     std::env::var_os("NOTED_CONFIG_DIR")
         .filter(|dir| !dir.is_empty())
         .map_or_else(
@@ -127,5 +190,4 @@ fn user_agent_path() -> PathBuf {
             },
             PathBuf::from,
         )
-        .join("user-agent")
 }

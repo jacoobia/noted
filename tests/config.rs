@@ -115,3 +115,36 @@ fn bad_saved_user_agent_asks_for_setup_again() {
         .stdout(predicate::str::contains("user agent: invalid"));
     assert_eq!(server.hits("/page"), 0);
 }
+
+#[test]
+fn rate_overrides_can_be_set_listed_and_removed() {
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    noted(&db)
+        .args(["config", "rate", "Wiki.Example.org", "2m"])
+        .assert()
+        .success();
+    noted(&db)
+        .args(["config", "rate"])
+        .assert()
+        .success()
+        .stdout("wiki.example.org 2m\n");
+    noted(&db)
+        .args(["config", "rate", "wiki.example.org", "0s"])
+        .assert()
+        .success();
+    noted(&db)
+        .args(["config", "rate"])
+        .assert()
+        .success()
+        .stdout("");
+}
+
+#[test]
+fn rate_needs_a_real_host() {
+    let dir = TempDir::new().unwrap();
+    noted(&dir.path().join("c.db"))
+        .args(["config", "rate", "not a host", "1s"])
+        .assert()
+        .code(64);
+}
