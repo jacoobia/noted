@@ -104,7 +104,12 @@ noted config rate                              # list overrides
 noted config rate oldschool.runescape.wiki 0s  # remove one
 ```
 
-Every agent sharing the cache books the next free slot for that host before it sends anything, so three agents hitting a 2-minute site get slots 2 minutes apart, and each one prints how long it's waiting: `noted: waiting 1m 34s for oldschool.runescape.wiki (gap 2m)`. noted waits up to `--max-wait` (90s by default, under the usual 2-minute agent command timeout). If the slot is further away than that, it books nothing, fetches nothing and exits 4 with `retry after <time>`. Cache hits never wait, and the robots.txt check itself isn't paced.
+Every agent sharing the cache books the next free slot for that host before it sends anything, and prints how long it's waiting: `noted: waiting 34s for oldschool.runescape.wiki (gap 2m)`. noted waits up to `--max-wait` in total, across any redirects. The default is 60s, which leaves room under the usual 2-minute agent command timeout. If the slot is further away than that:
+
+- with a stale copy cached, you get that copy and a warning, as when the site is offline;
+- otherwise noted fetches nothing and exits 4 with `retry after <time>`.
+
+So on a 2-minute site with the default limit, one fetch goes through every 2 minutes and the others come back at once. An agent that needs several pages can run its fetches in the background with a larger `--max-wait`, and they'll queue 2 minutes apart. Cache hits never wait, and the robots.txt check isn't paced. All ports on a host share one queue. A robots.txt `Crawl-delay` above a minute is capped at a minute.
 
 ## Using it with agents
 
@@ -154,7 +159,7 @@ Rewritten commands go through the normal permission check, which is why the snip
 | `NOTED_TIMEOUT` | Request timeout, such as `10s`. Defaults to 30s. |
 | `NOTED_ALLOW_WEBFETCH` | Set to `1` to stop the hook denying WebFetch. |
 
-Per-host request gaps are set with `noted config rate` (see [Rate limits](#rate-limits)) and stored next to the saved User-Agent.
+Per-host request gaps are set with `noted config rate` (see [Rate limits](#rate-limits)). They live in `rate-limits` in the same folder as the saved User-Agent, one `host gap` pair per line (for example `oldschool.runescape.wiki 2m`), so you can also edit the file by hand. noted warns about lines it can't read and leaves them in place.
 
 A User-Agent must be 1 to 256 printable ASCII characters. noted refuses anything else, so a bad value can't inject headers.
 
