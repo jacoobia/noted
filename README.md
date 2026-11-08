@@ -80,7 +80,7 @@ The body goes to stdout. A status line goes to stderr:
 | `refreshed` | The server sent a new copy. |
 | `stale` | The server was unreachable, timed out or returned a 5xx, so you got the cached copy. A warning line explains why, even with `-q`. |
 
-Any other HTTP error (404 and so on) isn't cached. noted exits 1, prints `noted: HTTP <code>` on stderr and nothing on stdout, so a script that saves stdout never mistakes an error page for content. Exit code 3 means no User-Agent is set yet (see [First run](#first-run)).
+Any other HTTP error (404 and so on) isn't cached. noted exits 1, prints `noted: HTTP <code>` on stderr and nothing on stdout, so a script that saves stdout never mistakes an error page for content. Exit code 3 means no User-Agent is set yet (see [First run](#first-run)). Exit code 4 means the site is rate limited for longer than `--max-wait` (see [Rate limits](#rate-limits)).
 
 `noted ls` lists entries with their age, TTL, freshness, size, hit count and URL. `noted rm` removes entries and overwrites their bytes on disk. `noted stats` shows totals, where the cache file is, and which User-Agent is in use.
 
@@ -93,6 +93,18 @@ HTML is converted at read time. noted keeps the main content (`.mw-parser-output
 Before any request for a page, noted checks the site's robots.txt for the product token in your User-Agent: the part before the first `/`, space or `(`, such as `Claude-Code` or `Claude-User`. A disallowed path is refused, and nothing is fetched or cached. The rules for each site are cached for a day. A site with no robots.txt allows everything. If robots.txt can't be reached, you get a stale copy of the page if there is one, and otherwise nothing.
 
 Several agents can use the same cache at once. It's a single SQLite file in WAL mode.
+
+### Rate limits
+
+Some sites ask for a minimum gap between requests. noted takes the gap from the site's robots.txt `Crawl-delay` for your User-Agent, or from an override you set:
+
+```
+noted config rate oldschool.runescape.wiki 2m
+noted config rate                              # list overrides
+noted config rate oldschool.runescape.wiki 0s  # remove one
+```
+
+Every agent sharing the cache books the next free slot for that host before it sends anything, so three agents hitting a 2-minute site get slots 2 minutes apart, and each one prints how long it's waiting: `noted: waiting 1m 34s for oldschool.runescape.wiki (gap 2m)`. noted waits up to `--max-wait` (90s by default, under the usual 2-minute agent command timeout). If the slot is further away than that, it books nothing, fetches nothing and exits 4 with `retry after <time>`. Cache hits never wait, and the robots.txt check itself isn't paced.
 
 ## Using it with agents
 
@@ -141,6 +153,8 @@ Rewritten commands go through the normal permission check, which is why the snip
 | `NOTED_CONFIG_DIR` | Where the saved User-Agent lives. Defaults to `noted` in the OS config directory: `%APPDATA%` on Windows, `~/Library/Application Support` on macOS, `$XDG_CONFIG_HOME` or `~/.config` on Linux. |
 | `NOTED_TIMEOUT` | Request timeout, such as `10s`. Defaults to 30s. |
 | `NOTED_ALLOW_WEBFETCH` | Set to `1` to stop the hook denying WebFetch. |
+
+Per-host request gaps are set with `noted config rate` (see [Rate limits](#rate-limits)) and stored next to the saved User-Agent.
 
 A User-Agent must be 1 to 256 printable ASCII characters. noted refuses anything else, so a bad value can't inject headers.
 
