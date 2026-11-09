@@ -53,7 +53,7 @@ Nothing in the User-Agent mentions noted. Sites see the agent and the person run
 ## Usage
 
 ```
-noted get <url> [--ttl <duration>] [--section <heading> | --outline] [--refresh] [--raw] [-q]
+noted get <url> [--ttl <duration>] [--section <heading> | --outline] [--plain | --raw] [--refresh] [-q]
 noted ls
 noted rm <url>... | --stale | --all
 noted stats
@@ -67,6 +67,7 @@ noted config user-agent [<value>]
 | `--outline` | Prints just the page's headings, to judge a long page before reading any of it. |
 | `--refresh` | Checks with the server even when the copy is still fresh. |
 | `--raw` | Prints HTML as the server sent it. Other content types, JSON included, always come back byte for byte, so `noted get <url> \| jq .name` works without it. |
+| `--plain` | Keeps link text but drops the link targets. On table-heavy wiki pages that's about a quarter fewer bytes. |
 | `-q` | Hides the status line. |
 
 The body goes to stdout. A status line goes to stderr:

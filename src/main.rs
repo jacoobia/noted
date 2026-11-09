@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::Result;
 use clap::{ArgGroup, Parser, Subcommand};
 use noted::cache::{Store, db_path};
-use noted::get::{self, GetArgs, Select};
+use noted::get::{self, Format, GetArgs, Select};
 use noted::{config, manage};
 
 #[derive(Parser)]
@@ -30,6 +30,9 @@ enum Command {
         /// Print HTML as-is instead of converting it to markdown
         #[arg(long)]
         raw: bool,
+        /// Print link text without the link targets, to save tokens
+        #[arg(long, conflicts_with = "raw")]
+        plain: bool,
         /// Print only the section under this heading
         #[arg(long, value_parser = non_blank)]
         section: Option<String>,
@@ -138,12 +141,18 @@ fn run(command: Command) -> Result<ExitCode> {
             ttl,
             refresh,
             raw,
+            plain,
             section,
             outline,
             quiet,
         } => {
             get::cache_key(&url)?;
             let store = Store::open(&db_path())?;
+            let format = match (raw, plain) {
+                (true, _) => Format::Raw,
+                (false, true) => Format::Plain,
+                (false, false) => Format::Markdown,
+            };
             let select = match (section, outline) {
                 (Some(heading), _) => Select::Section(heading),
                 (None, true) => Select::Outline,
@@ -155,7 +164,7 @@ fn run(command: Command) -> Result<ExitCode> {
                     url,
                     ttl,
                     refresh,
-                    raw,
+                    format,
                     select,
                     quiet,
                 },
