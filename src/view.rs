@@ -391,7 +391,7 @@ mod tests {
     #[test]
     fn picks_article_parser_output() {
         let md = html_to_markdown(WIKI);
-        assert!(md.starts_with("Abyssal demons are demons"), "{md}");
+        assert!(md.starts_with("Octopuses are soft-bodied"), "{md}");
         assert!(!md.contains("From the Old School"), "{md}");
         assert!(!md.contains("Protected"), "{md}");
     }
@@ -399,10 +399,10 @@ mod tests {
     #[test]
     fn first_row_label_value_pairs_survive() {
         let md = html_to_markdown(
-            "<body><table><tr><th>Members</th><td>Yes</td></tr>\
+            "<body><table><tr><th>Arms</th><td>8</td></tr>\
              <tr><th>Weight</th><td>0.453 kg</td></tr></table></body>",
         );
-        assert!(md.contains("| Members | Yes |"), "{md}");
+        assert!(md.contains("| Arms | 8 |"), "{md}");
         assert!(md.contains("| Weight | 0.453 kg |"), "{md}");
     }
 
@@ -428,8 +428,8 @@ mod tests {
     #[test]
     fn atx_headings() {
         let md = html_to_markdown(WIKI);
-        assert!(md.contains("## Drops"), "{md}");
-        assert!(md.contains("### 100%"), "{md}");
+        assert!(md.contains("## Anatomy"), "{md}");
+        assert!(md.contains("### Size (cm)"), "{md}");
     }
 
     #[test]
@@ -461,12 +461,12 @@ mod tests {
     #[test]
     fn keeps_row_header_cells() {
         let md = html_to_markdown(
-            "<body><table><tr><th>Item</th><th>Weight</th></tr>\
-             <tr><th>Members</th><td>Yes</td></tr>\
+            "<body><table><tr><th>Species</th><th>Weight</th></tr>\
+             <tr><th>Arms</th><td>8</td></tr>\
              <tr><th colspan=\"2\">Combat</th></tr>\
              <tr><th>Attack</th><td>+82</td></tr></table></body>",
         );
-        assert!(md.contains("| Members | Yes |"), "{md}");
+        assert!(md.contains("| Arms | 8 |"), "{md}");
         assert!(md.contains("| Combat |"), "{md}");
         assert!(md.contains("| Attack | +82 |"), "{md}");
     }
@@ -487,7 +487,7 @@ mod tests {
     #[test]
     fn icon_link_next_to_the_same_text_link_is_dropped() {
         let md = html_to_markdown(
-            "<body><table><tr><th>Item</th><th>Name</th></tr>\
+            "<body><table><tr><th>Species</th><th>Name</th></tr>\
              <tr><td><a href=\"/w/Death_rune\" title=\"Death rune\"><img src=\"/d.png\"></a></td>\
              <td><a href=\"/w/Death_rune\" title=\"Death rune\">Death rune</a></td></tr></table></body>",
         );
@@ -515,7 +515,7 @@ mod tests {
     #[test]
     fn separator_rows_stay_valid_when_a_column_is_empty() {
         let md = html_to_markdown(
-            "<body><table><tr><th></th><th>Item</th></tr><tr><td></td><td>Ashes</td></tr></table></body>",
+            "<body><table><tr><th></th><th>Species</th></tr><tr><td></td><td>Common octopus</td></tr></table></body>",
         );
         assert!(md.contains("| --- | --- |"), "{md}");
     }
@@ -538,15 +538,15 @@ mod tests {
     #[test]
     fn caption_only_first_row_becomes_a_caption() {
         let md = html_to_markdown(
-            "<body><table><tr><th colspan=\"2\">Cache of runes</th></tr>\
+            "<body><table><tr><th colspan=\"2\">Common octopus</th></tr>\
              <tr><td colspan=\"2\" class=\"infobox-padding\"></td></tr>\
              <tr><td colspan=\"2\"><img src=\"/i.png\"></td></tr>\
-             <tr><th>Released</th><td>2024</td></tr><tr><th>Members</th><td>Yes</td></tr></table></body>",
+             <tr><th>Order</th><td>Octopoda</td></tr><tr><th>Arms</th><td>8</td></tr></table></body>",
         );
-        assert!(md.starts_with("**Cache of runes**\n\n| Released |"), "{md}");
-        assert!(!md.contains("| Cache of runes |"), "{md}");
-        assert!(md.contains("| Released | 2024 |\n| --- | --- |"), "{md}");
-        assert!(md.contains("| Members | Yes |"), "{md}");
+        assert!(md.starts_with("**Common octopus**\n\n| Order |"), "{md}");
+        assert!(!md.contains("| Common octopus |"), "{md}");
+        assert!(md.contains("| Order | Octopoda |\n| --- | --- |"), "{md}");
+        assert!(md.contains("| Arms | 8 |"), "{md}");
     }
 
     #[test]
@@ -608,8 +608,8 @@ mod tests {
     #[test]
     fn section_case_insensitive_trimmed() {
         assert_eq!(
-            section("## Drops\nash", "  drops ").unwrap(),
-            "## Drops\nash"
+            section("## Anatomy\narms", "  anatomy ").unwrap(),
+            "## Anatomy\narms"
         );
     }
 
@@ -625,11 +625,11 @@ mod tests {
 
     #[test]
     fn section_keeps_hash_inside_title() {
-        let text = "## C#\nsharp\n## Drops ##\nash\n#hashtag\n## Über\nu";
+        let text = "## C#\nsharp\n## Anatomy ##\narms\n#hashtag\n## Über\nu";
         assert_eq!(section(text, "c#").unwrap(), "## C#\nsharp");
         assert_eq!(
-            section(text, "drops").unwrap(),
-            "## Drops ##\nash\n#hashtag"
+            section(text, "anatomy").unwrap(),
+            "## Anatomy ##\narms\n#hashtag"
         );
         assert_eq!(section(text, "über").unwrap(), "## Über\nu");
     }

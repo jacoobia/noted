@@ -59,7 +59,7 @@ fn rm_by_url_normalises_fragment() {
     let db = dir.path().join("c.db");
     let server = server();
     fetch(&db, &server.url("/a"), "1d");
-    let url = format!("{}#Drops", server.url("/a"));
+    let url = format!("{}#Anatomy", server.url("/a"));
     assert_eq!(stdout_of(&db, &["rm", &url]), "removed 1\n");
     assert_eq!(stdout_of(&db, &["ls"]), "");
 }

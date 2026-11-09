@@ -202,7 +202,7 @@ pub fn validate_host(value: &str) -> Result<String, String> {
         .then(|| url::Host::parse(&value.to_ascii_lowercase()).ok())
         .flatten();
     host.map(|host| host.to_string())
-        .ok_or_else(|| "must be a host name like oldschool.runescape.wiki".to_owned())
+        .ok_or_else(|| "must be a host name like en.wikipedia.org".to_owned())
 }
 
 fn rate_limits_path() -> PathBuf {
