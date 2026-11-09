@@ -7,6 +7,62 @@ use tempfile::TempDir;
 const AGENT: &str = "Claude-Code/2.1 (+mailto:jo@example.com)";
 
 #[test]
+fn rate_hosts_are_stored_the_way_urls_report_them() {
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    noted(&db)
+        .args(["config", "rate", "bücher.de", "2s"])
+        .assert()
+        .success();
+    noted(&db)
+        .args(["config", "rate", "[::1]", "1s"])
+        .assert()
+        .success();
+    noted(&db)
+        .args(["config", "rate"])
+        .assert()
+        .success()
+        .stdout("[::1] 1s\nxn--bcher-kva.de 2s\n");
+    noted(&db)
+        .args(["config", "rate", "other.example"])
+        .assert()
+        .success()
+        .stdout("")
+        .stderr(predicate::str::contains("no override for other.example"));
+}
+
+#[test]
+fn unreadable_rate_lines_are_reported_and_kept() {
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    let config = common::config_dir(&db);
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(
+        config.join("rate-limits"),
+        "wiki.example 2\nsite.example 2m\n",
+    )
+    .unwrap();
+    noted(&db)
+        .args(["config", "rate"])
+        .assert()
+        .success()
+        .stdout("site.example 2m\n")
+        .stderr(
+            predicate::str::contains("ignoring unreadable line")
+                .and(predicate::str::contains("wiki.example 2")),
+        );
+    noted(&db)
+        .args(["config", "rate", "new.example", "1m"])
+        .assert()
+        .success();
+    let saved = std::fs::read_to_string(config.join("rate-limits")).unwrap();
+    assert!(
+        saved.contains("wiki.example 2\n") && saved.contains("new.example 1m"),
+        "{saved}"
+    );
+}
+
+#[test]
 fn saved_user_agent_round_trips() {
     let dir = TempDir::new().unwrap();
     let db = dir.path().join("c.db");
@@ -114,4 +170,37 @@ fn bad_saved_user_agent_asks_for_setup_again() {
         .success()
         .stdout(predicate::str::contains("user agent: invalid"));
     assert_eq!(server.hits("/page"), 0);
+}
+
+#[test]
+fn rate_overrides_can_be_set_listed_and_removed() {
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    noted(&db)
+        .args(["config", "rate", "Wiki.Example.org", "2m"])
+        .assert()
+        .success();
+    noted(&db)
+        .args(["config", "rate"])
+        .assert()
+        .success()
+        .stdout("wiki.example.org 2m\n");
+    noted(&db)
+        .args(["config", "rate", "wiki.example.org", "0s"])
+        .assert()
+        .success();
+    noted(&db)
+        .args(["config", "rate"])
+        .assert()
+        .success()
+        .stdout("");
+}
+
+#[test]
+fn rate_needs_a_real_host() {
+    let dir = TempDir::new().unwrap();
+    noted(&dir.path().join("c.db"))
+        .args(["config", "rate", "not a host", "1s"])
+        .assert()
+        .code(64);
 }
