@@ -163,3 +163,71 @@ fn section_with_raw_still_reads_markdown() {
         .success()
         .stdout(predicate::str::starts_with("## Trivia"));
 }
+
+#[test]
+fn outline_lists_the_page_headings() {
+    let dir = TempDir::new().unwrap();
+    let server = wiki_server();
+    noted(&dir.path().join("c.db"))
+        .args(["get", "-q", "--outline", &server.url("/w/Abyssal_demon")])
+        .assert()
+        .success()
+        .stdout("## Drops\n### 100%\n## Trivia\n");
+}
+
+#[test]
+fn outline_and_section_cannot_be_combined() {
+    let dir = TempDir::new().unwrap();
+    noted(&dir.path().join("c.db"))
+        .args(["get", "--outline", "--section", "Drops", "https://a.io/"])
+        .assert()
+        .code(64);
+}
+
+#[test]
+fn outline_lines_are_clean_titles_that_section_accepts() {
+    let server = TestServer::start(vec![(
+        "/doc",
+        always(|| {
+            Reply::ok(
+                "text/html",
+                "<body><h1>Array.prototype.at()</h1><h2><a href=\"#description\">Description</a></h2><p>x</p></body>",
+            )
+        }),
+    )]);
+    let dir = TempDir::new().unwrap();
+    noted(&dir.path().join("c.db"))
+        .args(["get", "-q", "--outline", &server.url("/doc")])
+        .assert()
+        .success()
+        .stdout("# Array.prototype.at()\n## Description\n");
+}
+
+#[test]
+fn outline_says_when_a_page_has_no_headings() {
+    let server = TestServer::start(vec![(
+        "/flat",
+        always(|| Reply::ok("text/plain", "just text\n")),
+    )]);
+    let dir = TempDir::new().unwrap();
+    noted(&dir.path().join("c.db"))
+        .args(["get", "-q", "--outline", &server.url("/flat")])
+        .assert()
+        .success()
+        .stdout("")
+        .stderr(predicate::str::contains("no headings"));
+}
+
+#[test]
+fn outline_rejects_binary_content() {
+    let server = TestServer::start(vec![(
+        "/data",
+        always(|| Reply::ok("application/octet-stream", vec![0, 1, 2])),
+    )]);
+    let dir = TempDir::new().unwrap();
+    noted(&dir.path().join("c.db"))
+        .args(["get", "-q", "--outline", &server.url("/data")])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("--outline"));
+}

@@ -500,3 +500,38 @@ fn oversized_body_is_an_error_even_when_stale() {
         .stdout("")
         .stderr(predicate::str::contains("limit"));
 }
+
+#[test]
+fn status_line_shows_the_stored_size() {
+    let dir = TempDir::new().unwrap();
+    let server = page_server();
+    noted(&dir.path().join("c.db"))
+        .args(["get", &server.url("/page")])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("200 text/plain · 10B"));
+}
+
+#[test]
+fn help_explains_ttl_offline_and_exit_codes() {
+    let dir = TempDir::new().unwrap();
+    noted(&dir.path().join("c.db"))
+        .args(["get", "--help"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("counts from the last time")
+                .and(predicate::str::contains("offline"))
+                .and(predicate::str::contains("Exit codes")),
+        );
+    noted(&dir.path().join("c.db"))
+        .args(["hook", "--help"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("\"type\": \"command\"")
+                .and(predicate::str::contains("Bash(noted get:*)"))
+                .and(predicate::str::contains("--raw"))
+                .and(predicate::str::contains("NOTED_ALLOW_WEBFETCH")),
+        );
+}
