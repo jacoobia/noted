@@ -10,16 +10,25 @@ pub struct Response {
     pub content_type: Option<String>,
     pub etag: Option<String>,
     pub last_modified: Option<String>,
+    pub location: Option<String>,
     pub body: Vec<u8>,
 }
 
-pub fn fetch(url: &str, etag: Option<&str>, last_modified: Option<&str>) -> Result<Response> {
+pub fn fetch(
+    url: &str,
+    user_agent: &str,
+    etag: Option<&str>,
+    last_modified: Option<&str>,
+    max_redirects: u32,
+) -> Result<Response> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
         .timeout_global(Some(timeout()))
+        .max_redirects(max_redirects)
+        .max_redirects_will_error(false)
         .build()
         .into();
-    let mut request = agent.get(url).header("User-Agent", user_agent());
+    let mut request = agent.get(url).header("User-Agent", user_agent);
     if let Some(etag) = etag {
         request = request.header("If-None-Match", etag);
     }
@@ -34,10 +43,11 @@ pub fn fetch(url: &str, etag: Option<&str>, last_modified: Option<&str>) -> Resu
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned)
     };
-    let (content_type, etag, last_modified) = (
+    let (content_type, etag, last_modified, location) = (
         header("Content-Type"),
         header("ETag"),
         header("Last-Modified"),
+        header("Location"),
     );
     let body = response
         .body_mut()
@@ -49,6 +59,7 @@ pub fn fetch(url: &str, etag: Option<&str>, last_modified: Option<&str>) -> Resu
         content_type,
         etag,
         last_modified,
+        location,
         body,
     })
 }
@@ -58,17 +69,4 @@ fn timeout() -> Duration {
         .ok()
         .and_then(|value| humantime::parse_duration(&value).ok())
         .unwrap_or(DEFAULT_TIMEOUT)
-}
-
-pub fn user_agent() -> String {
-    let base = concat!(
-        "noted/",
-        env!("CARGO_PKG_VERSION"),
-        " (+",
-        env!("CARGO_PKG_REPOSITORY")
-    );
-    match std::env::var("NOTED_CONTACT") {
-        Ok(contact) if !contact.is_empty() => format!("{base}; {contact})"),
-        _ => format!("{base})"),
-    }
 }

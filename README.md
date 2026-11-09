@@ -34,6 +34,22 @@ From source, with Rust 1.89 or newer:
 cargo install --locked --git https://github.com/jacoobia/noted
 ```
 
+## First run
+
+noted won't make a request until it knows who is asking. The first `noted get` that needs the network exits with code 3 and asks the agent to check with you how its requests should identify themselves. There are three choices:
+
+1. **Recommended:** the agent's name and version plus a way to reach you, e.g. `Claude-Code/2.1 (+mailto:you@example.com)`.
+2. **Your own string.**
+3. **The agent's usual User-Agent**, e.g. Claude Code's `Claude-User (claude-code/2.1.318; +https://support.anthropic.com/)`.
+
+The agent saves your answer with:
+
+```
+noted config user-agent "Claude-Code/2.1 (+mailto:you@example.com)"
+```
+
+Nothing in the User-Agent mentions noted. Sites see the agent and the person running it, and can allow or block that agent in robots.txt the way they would if it fetched the page itself. Cached pages still load before this is set, because a cache hit makes no request.
+
 ## Usage
 
 ```
@@ -41,6 +57,7 @@ noted get <url> [--ttl <duration>] [--section <heading>] [--refresh] [--raw] [-q
 noted ls
 noted rm <url>... | --stale | --all
 noted stats
+noted config user-agent [<value>]
 ```
 
 | Option | What it does |
@@ -61,15 +78,17 @@ The body goes to stdout. A status line goes to stderr:
 | `refreshed` | The server sent a new copy. |
 | `stale` | The server was unreachable, timed out or returned a 5xx, so you got the cached copy. A warning line explains why, even with `-q`. |
 
-Any other HTTP error (404 and so on) isn't cached. noted exits 1, prints `noted: HTTP <code>` on stderr and the server's error page on stdout.
+Any other HTTP error (404 and so on) isn't cached. noted exits 1, prints `noted: HTTP <code>` on stderr and the server's error page on stdout. Exit code 3 means no User-Agent is set yet (see [First run](#first-run)).
 
-`noted ls` lists entries with their age, TTL, freshness, size, hit count and URL. `noted rm` removes entries and overwrites their bytes on disk. `noted stats` shows totals and where the cache file is.
+`noted ls` lists entries with their age, TTL, freshness, size, hit count and URL. `noted rm` removes entries and overwrites their bytes on disk. `noted stats` shows totals, where the cache file is, and which User-Agent is in use.
 
 ## How it works
 
 Each URL is fetched once and stored with its TTL. While the TTL lasts, reads come from disk. Once it expires, noted sends the stored ETag or Last-Modified back to the server. Usually the answer is a 304, which costs a few hundred bytes instead of the full page. If the server can't be reached, you get the old copy and a warning instead of an error.
 
 HTML is converted at read time. noted keeps the main content (`.mw-parser-output` on MediaWiki sites, else `main`, `article` or `body`), drops scripts, navigation, images, tables of contents and navboxes, and tidies tables so they stay readable as markdown. The original bytes stay in the cache, so `--raw` always has them.
+
+Before any request for a page, noted checks the site's robots.txt for the product token in your User-Agent: the part before the first `/`, space or `(`, such as `Claude-Code` or `Claude-User`. A disallowed path is refused, and nothing is fetched or cached. The rules for each site are cached for a day. A site with no robots.txt allows everything. If robots.txt can't be reached, you get a stale copy of the page if there is one, and otherwise nothing.
 
 Several agents can use the same cache at once. It's a single SQLite file in WAL mode.
 
@@ -116,11 +135,12 @@ Rewritten commands go through the normal permission check, which is why the snip
 | Variable | Effect |
 |---|---|
 | `NOTED_DB` | Path to the cache file. Defaults to `noted/cache.db` in the OS cache directory: `%LOCALAPPDATA%` on Windows, `~/Library/Caches` on macOS, `$XDG_CACHE_HOME` or `~/.cache` on Linux. |
-| `NOTED_CONTACT` | Contact details appended to the User-Agent. Some sites, Wikimedia wikis among them, ask automated clients for a way to reach the operator. |
+| `NOTED_USER_AGENT` | User-Agent for this process, overriding the saved one. Useful when several agents share one cache and should each identify themselves. |
+| `NOTED_CONFIG_DIR` | Where the saved User-Agent lives. Defaults to `noted` in the OS config directory: `%APPDATA%` on Windows, `~/Library/Application Support` on macOS, `$XDG_CONFIG_HOME` or `~/.config` on Linux. |
 | `NOTED_TIMEOUT` | Request timeout, such as `10s`. Defaults to 30s. |
 | `NOTED_ALLOW_WEBFETCH` | Set to `1` to stop the hook denying WebFetch. |
 
-The User-Agent is `noted/<version> (+https://github.com/jacoobia/noted)`, with your contact details added after the URL when `NOTED_CONTACT` is set.
+A User-Agent must be 1 to 256 printable ASCII characters. noted refuses anything else, so a bad value can't inject headers.
 
 ## Security and privacy
 

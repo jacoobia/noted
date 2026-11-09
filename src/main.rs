@@ -6,7 +6,7 @@ use anyhow::Result;
 use clap::{ArgGroup, Parser, Subcommand};
 use noted::cache::{Store, db_path};
 use noted::get::{self, GetArgs};
-use noted::manage;
+use noted::{config, manage};
 
 #[derive(Parser)]
 #[command(version, about = "Fetch URLs through a local cache")]
@@ -51,6 +51,11 @@ enum Command {
     },
     /// Show cache totals
     Stats,
+    /// Show or change settings
+    Config {
+        #[command(subcommand)]
+        setting: Setting,
+    },
     /// Handle a Claude Code pre-tool-use hook event from stdin
     Hook,
 }
@@ -58,6 +63,15 @@ enum Command {
 /// Claude Code treats exit code 2 from a hook as "block this tool call", so usage errors
 /// use 64 (`EX_USAGE`) rather than clap's default of 2.
 const USAGE_ERROR: u8 = 64;
+
+#[derive(Subcommand)]
+enum Setting {
+    /// Print the User-Agent requests are sent with, or save a new one
+    UserAgent {
+        #[arg(value_parser = config::validate_user_agent)]
+        value: Option<String>,
+    },
+}
 
 fn main() -> ExitCode {
     let command = match Cli::try_parse() {
@@ -77,7 +91,13 @@ fn main() -> ExitCode {
     }
     run(command).unwrap_or_else(|err| {
         eprintln!("noted: {err:#}");
-        ExitCode::FAILURE
+        if err.is::<config::SetupNeeded>() {
+            ExitCode::from(config::SETUP_NEEDED)
+        } else if err.is::<config::InvalidEnvUserAgent>() {
+            ExitCode::from(USAGE_ERROR)
+        } else {
+            ExitCode::FAILURE
+        }
     })
 }
 
@@ -113,8 +133,25 @@ fn run(command: Command) -> Result<ExitCode> {
             let path = db_path();
             manage::stats(&Store::open(&path)?, &path).map(|()| ExitCode::SUCCESS)
         }
+        Command::Config {
+            setting: Setting::UserAgent { value },
+        } => user_agent_setting(value),
         Command::Hook => unreachable!("handled in main"),
     }
+}
+
+fn user_agent_setting(value: Option<String>) -> Result<ExitCode> {
+    if let Some(value) = value {
+        let path = config::save_user_agent(&value)?;
+        eprintln!("noted: saved to {}", path.display());
+        return Ok(ExitCode::SUCCESS);
+    }
+    let Some((current, _)) = config::user_agent()? else {
+        eprintln!("noted: not set. Save one with: noted config user-agent \"<value>\"");
+        return Ok(ExitCode::from(config::SETUP_NEEDED));
+    };
+    noted::output::emit(format!("{current}\n").as_bytes())?;
+    Ok(ExitCode::SUCCESS)
 }
 
 fn hook() {

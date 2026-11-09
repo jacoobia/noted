@@ -4,6 +4,7 @@ use std::path::Path;
 use anyhow::Result;
 
 use crate::cache::{Store, now};
+use crate::config;
 use crate::get::cache_key;
 use crate::output::{emit, short_duration, short_size};
 
@@ -54,9 +55,14 @@ pub fn stats(store: &Store, path: &Path) -> Result<()> {
     let stale = entries.iter().filter(|e| !e.is_fresh(now)).count();
     let bytes: i64 = entries.iter().map(|e| e.size).sum();
     let hits: i64 = entries.iter().map(|e| e.hits).sum();
+    let agent = match config::user_agent() {
+        Ok(Some((value, source))) => format!("{value} ({})", source.label()),
+        Ok(None) => "not set".to_owned(),
+        Err(err) => format!("invalid ({err})"),
+    };
     emit(
         format!(
-            "entries: {}\nstale: {stale}\nbytes: {bytes} ({})\nhits: {hits}\ndb: {}\n",
+            "entries: {}\nstale: {stale}\nbytes: {bytes} ({})\nhits: {hits}\ndb: {}\nuser agent: {agent}\n",
             entries.len(),
             short_size(bytes),
             path.display(),
