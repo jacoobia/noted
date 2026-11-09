@@ -2,6 +2,12 @@
   <img src="assets/header.svg" alt="noted: an agent asks whether Array.prototype.at() takes negative indexes, runs noted get on the MDN page, gets a cache hit and replies Noted.">
 </p>
 
+<p align="center">
+  <a href="https://github.com/jacoobia/noted/actions/workflows/ci.yml"><img src="https://github.com/jacoobia/noted/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/jacoobia/noted/releases/latest"><img src="https://img.shields.io/github/v/release/jacoobia/noted" alt="Latest release"></a>
+  <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue" alt="License: MIT OR Apache-2.0"></a>
+</p>
+
 noted is a fetch CLI for coding agents. It keeps web pages and API responses in a local cache and returns HTML as compact markdown. An agent can re-read the same docs page all session without another network request, and without dragging the whole page into its context.
 
 ```
