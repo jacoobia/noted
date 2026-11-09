@@ -231,3 +231,54 @@ fn outline_rejects_binary_content() {
         .code(1)
         .stderr(predicate::str::contains("--outline"));
 }
+
+#[test]
+fn plain_strips_links_but_keeps_their_text_and_code() {
+    let server = TestServer::start(vec![(
+        "/links",
+        always(|| {
+            Reply::ok(
+                "text/html",
+                "<body><h2><a href=\"#drops\">Drops</a></h2>\
+                 <p>See <a href=\"/w/Death_rune\">Death rune</a> and <code>[a](b)</code>.</p>\
+                 <table><tr><th>Item</th></tr><tr><td><a href=\"/w/Ashes\">Ashes</a></td></tr></table></body>",
+            )
+        }),
+    )]);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    noted(&db)
+        .args(["get", "-q", "--plain", &server.url("/links")])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("See Death rune and `[a](b)`.")
+                .and(predicate::str::contains("## Drops"))
+                .and(predicate::str::contains("| Ashes |"))
+                .and(predicate::str::contains("](/w/").not()),
+        );
+    noted(&db)
+        .args(["get", "-q", "--plain", "--outline", &server.url("/links")])
+        .assert()
+        .success()
+        .stdout("## Drops\n");
+}
+
+#[test]
+fn plain_leaves_non_html_untouched_and_conflicts_with_raw() {
+    let server = TestServer::start(vec![(
+        "/api",
+        always(|| Reply::ok("application/json", "{\"link\":\"[a](b)\"}")),
+    )]);
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    noted(&db)
+        .args(["get", "-q", "--plain", &server.url("/api")])
+        .assert()
+        .success()
+        .stdout("{\"link\":\"[a](b)\"}");
+    noted(&db)
+        .args(["get", "--plain", "--raw", &server.url("/api")])
+        .assert()
+        .code(64);
+}
