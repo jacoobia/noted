@@ -175,12 +175,21 @@ A User-Agent must be 1 to 256 printable ASCII characters. noted refuses anything
 - A cached page can contain text written to steer an agent, and it keeps serving that text until it expires. Treat fetched content as untrusted input, cached or not.
 - noted only sends GET requests. The hook won't rewrite requests with auth headers, credentials, or common token and signature parameters in the URL. If you run `noted get` yourself on a URL that contains a secret, the URL and the response are cached like any other.
 
+To report a security problem, see [SECURITY.md](SECURITY.md).
+
 ## Limitations
 
 - Pages that build their content with JavaScript come back nearly empty. `--raw` shows what the server actually sent.
 - Pages that aren't UTF-8 are decoded lossily when converted to markdown. `--raw` keeps the original bytes.
 - On Windows, writing binary output straight to a console window fails. Pipe it or redirect it to a file instead.
 - Responses over 20MB are refused.
+
+## Uninstalling
+
+1. Delete the `noted` binary. The installers put it in `~/.cargo/bin` (`%USERPROFILE%\.cargo\bin` on Windows).
+2. Delete the cache file. `noted stats` prints where it is.
+3. Delete the config folder that holds the saved User-Agent and rate limits (see `NOTED_CONFIG_DIR` under [Configuration](#configuration)).
+4. If you set up Claude Code, remove the hook entry and the `Bash(noted get:*)` rule from `~/.claude/settings.json`, and delete `~/.claude/skills/noted`.
 
 ## Contributing
 
