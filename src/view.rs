@@ -1,6 +1,6 @@
 use ego_tree::NodeId;
 use scraper::node::Text;
-use scraper::{Html, Node, Selector};
+use scraper::{ElementRef, Html, Node, Selector};
 
 const CONTENT_ROOTS: [&str; 5] = [
     "#mw-content-text > .mw-parser-output",
@@ -9,8 +9,8 @@ const CONTENT_ROOTS: [&str; 5] = [
     "article",
     "body",
 ];
-const NOISE: &str =
-    "script, style, nav, footer, noscript, img, .mw-editsection, #toc, .toc, .navbox";
+const NOISE: &str = "script, style, nav, footer, noscript, img, .mw-editsection, #toc, .toc, .navbox, \
+                     .infobox-switch-resources, .infobox-switch-buttons-caption";
 
 pub fn is_html(content_type: Option<&str>) -> bool {
     content_type
@@ -27,6 +27,8 @@ pub fn html_to_markdown(html: &str) -> String {
     let noise: Vec<_> = document.select(&selector(NOISE)).map(|e| e.id()).collect();
     detach(&mut document, noise);
     tidy_links(&mut document);
+    drop_empty_rows(&mut document);
+    lift_caption_rows(&mut document);
     normalise_table_cells(&mut document);
     let content = CONTENT_ROOTS
         .iter()
@@ -45,12 +47,18 @@ fn detach(document: &mut Html, ids: Vec<NodeId>) {
 }
 
 fn tidy_links(document: &mut Html) {
+    let anchors = selector("a");
     let links: Vec<_> = document
-        .select(&selector("a"))
+        .select(&anchors)
         .map(|link| {
-            let has_text = link.text().any(|text| !text.trim().is_empty());
+            let has_text = has_text(link);
             let title = link.value().attr("title").map(str::trim).map(str::to_owned);
-            (link.id(), has_text, title.filter(|title| !title.is_empty()))
+            let repeated = !has_text && repeats_a_text_link_in_its_row(link, &anchors);
+            (
+                link.id(),
+                has_text,
+                title.filter(|title| !title.is_empty() && !repeated),
+            )
         })
         .collect();
     for (id, has_text, title) in links {
@@ -76,6 +84,74 @@ fn tidy_links(document: &mut Html) {
     }
 }
 
+fn has_text(element: ElementRef) -> bool {
+    element.text().any(|text| !text.trim().is_empty())
+}
+
+fn repeats_a_text_link_in_its_row(link: ElementRef, anchors: &Selector) -> bool {
+    let Some(href) = link.value().attr("href") else {
+        return false;
+    };
+    link.ancestors()
+        .filter_map(ElementRef::wrap)
+        .find(|ancestor| ancestor.value().name() == "tr")
+        .is_some_and(|row| {
+            row.select(anchors).any(|other| {
+                other.id() != link.id()
+                    && other.value().attr("href") == Some(href)
+                    && has_text(other)
+            })
+        })
+}
+
+fn drop_empty_rows(document: &mut Html) {
+    let empty: Vec<_> = document
+        .select(&selector("tr"))
+        .filter(|row| !has_text(*row))
+        .map(|row| row.id())
+        .collect();
+    detach(document, empty);
+}
+
+/// A first row holding a single caption cell (an infobox title spanning the table) would
+/// otherwise become a one-column header over a wider table.
+fn lift_caption_rows(document: &mut Html) {
+    let (rows, cells) = (selector("tr"), selector("th, td"));
+    let mut lifts = Vec::new();
+    for table in document.select(&selector("table")) {
+        let mut table_rows = table.select(&rows);
+        let Some(first) = table_rows.next() else {
+            continue;
+        };
+        let filled: Vec<_> = first
+            .select(&cells)
+            .filter(|cell| has_text(*cell))
+            .collect();
+        let widest_other = table_rows.map(|row| row.select(&cells).count()).max();
+        if let ([caption], Some(2..)) = (filled.as_slice(), widest_other) {
+            lifts.push((table.id(), first.id(), caption.id()));
+        }
+    }
+    for (table, row, caption) in lifts {
+        rename(document, row, "p");
+        rename(document, caption, "strong");
+        if let Some(mut row_node) = document.tree.get_mut(row) {
+            row_node.detach();
+        }
+        if let Some(mut table_node) = document.tree.get_mut(table) {
+            table_node.insert_id_before(row);
+        }
+    }
+}
+
+fn rename(document: &mut Html, id: NodeId, tag: &str) {
+    if let Some(mut node) = document.tree.get_mut(id)
+        && let Node::Element(element) = node.value()
+    {
+        element.name.local = tag.into();
+    }
+}
+
 /// htmd builds the header from the first row's `th` cells and reads only `td` cells after it,
 /// so any other mix of cell types loses data.
 fn normalise_table_cells(document: &mut Html) {
@@ -88,11 +164,7 @@ fn normalise_table_cells(document: &mut Html) {
         }
     }
     for (id, tag) in renames {
-        if let Some(mut node) = document.tree.get_mut(id)
-            && let Node::Element(element) = node.value()
-        {
-            element.name.local = tag.into();
-        }
+        rename(document, id, tag);
     }
 }
 
@@ -111,10 +183,13 @@ fn compact_tables(markdown: &str) -> String {
         if cells.iter().all(|cell| cell.is_empty()) {
             continue;
         }
-        let cells: Vec<&str> = cells
-            .into_iter()
-            .map(|cell| if is_rule(cell) { "---" } else { cell })
-            .collect();
+        let separator = cells.iter().any(|cell| is_rule(cell))
+            && cells.iter().all(|cell| cell.is_empty() || is_rule(cell));
+        let cells: Vec<&str> = if separator {
+            vec!["---"; cells.len()]
+        } else {
+            cells
+        };
         lines.push(format!("| {} |", cells.join(" | ")));
     }
     lines.join("\n")
@@ -310,6 +385,71 @@ mod tests {
         assert!(md.contains("| Stab | Slash |"), "{md}");
         assert!(md.contains("| +0 | +82 |"), "{md}");
         assert!(md.lines().next().unwrap().contains("img"), "{md}");
+    }
+
+    #[test]
+    fn icon_link_next_to_the_same_text_link_is_dropped() {
+        let md = html_to_markdown(
+            "<body><table><tr><th>Item</th><th>Name</th></tr>\
+             <tr><td><a href=\"/w/Death_rune\" title=\"Death rune\"><img src=\"/d.png\"></a></td>\
+             <td><a href=\"/w/Death_rune\" title=\"Death rune\">Death rune</a></td></tr></table></body>",
+        );
+        assert_eq!(md.matches("[Death rune]").count(), 1, "{md}");
+    }
+
+    #[test]
+    fn duplicate_rule_matches_on_href_and_spares_icon_headers() {
+        let md = html_to_markdown(
+            "<body><table><tr><th><a href=\"/w/Stab\" title=\"Stab\"><img src=\"/s.png\"></a></th>\
+             <th><a href=\"/w/Slash\" title=\"Slash\"><img src=\"/l.png\"></a></th></tr>\
+             <tr><td><a href=\"/w/Death_rune\" title=\"Death rune\"><img src=\"/d.png\"></a>\
+             <a href=\"/w/Death_rune\">Death rune</a></td>\
+             <td><a href=\"/w/Blood_rune\" title=\"Blood rune\"><img src=\"/b.png\"></a>\
+             <a href=\"/w/Blood_rune\">Blood rune</a></td></tr></table></body>",
+        );
+        assert!(
+            md.contains("| [Stab](/w/Stab) | [Slash](/w/Slash) |"),
+            "{md}"
+        );
+        assert_eq!(md.matches("[Death rune]").count(), 1, "{md}");
+        assert_eq!(md.matches("[Blood rune]").count(), 1, "{md}");
+    }
+
+    #[test]
+    fn separator_rows_stay_valid_when_a_column_is_empty() {
+        let md = html_to_markdown(
+            "<body><table><tr><th></th><th>Item</th></tr><tr><td></td><td>Ashes</td></tr></table></body>",
+        );
+        assert!(md.contains("| --- | --- |"), "{md}");
+    }
+
+    #[test]
+    fn infobox_switch_data_is_dropped() {
+        let md = html_to_markdown(
+            "<div class=\"mw-parser-output\"><table class=\"infobox\"><tr><th>Attack</th><td>250</td></tr></table>\
+             <div class=\"infobox-switch-resources hidden\"><span data-attr-param=\"att\">250</span>\
+             <span data-attr-param=\"str\">140</span></div></div>",
+        );
+        assert!(!md.contains("140"), "{md}");
+        let buttons = html_to_markdown(
+            "<div class=\"mw-parser-output\"><div class=\"infobox-switch-buttons-caption\">Normal</div>\
+             <p>Stats</p></div>",
+        );
+        assert_eq!(buttons, "Stats");
+    }
+
+    #[test]
+    fn caption_only_first_row_becomes_a_caption() {
+        let md = html_to_markdown(
+            "<body><table><tr><th colspan=\"2\">Cache of runes</th></tr>\
+             <tr><td colspan=\"2\" class=\"infobox-padding\"></td></tr>\
+             <tr><td colspan=\"2\"><img src=\"/i.png\"></td></tr>\
+             <tr><th>Released</th><td>2024</td></tr><tr><th>Members</th><td>Yes</td></tr></table></body>",
+        );
+        assert!(md.starts_with("**Cache of runes**\n\n| Released |"), "{md}");
+        assert!(!md.contains("| Cache of runes |"), "{md}");
+        assert!(md.contains("| Released | 2024 |\n| --- | --- |"), "{md}");
+        assert!(md.contains("| Members | Yes |"), "{md}");
     }
 
     #[test]

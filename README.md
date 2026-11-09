@@ -78,7 +78,7 @@ The body goes to stdout. A status line goes to stderr:
 | `refreshed` | The server sent a new copy. |
 | `stale` | The server was unreachable, timed out or returned a 5xx, so you got the cached copy. A warning line explains why, even with `-q`. |
 
-Any other HTTP error (404 and so on) isn't cached. noted exits 1, prints `noted: HTTP <code>` on stderr and the server's error page on stdout. Exit code 3 means no User-Agent is set yet (see [First run](#first-run)).
+Any other HTTP error (404 and so on) isn't cached. noted exits 1, prints `noted: HTTP <code>` on stderr and nothing on stdout, so a script that saves stdout never mistakes an error page for content. Exit code 3 means no User-Agent is set yet (see [First run](#first-run)).
 
 `noted ls` lists entries with their age, TTL, freshness, size, hit count and URL. `noted rm` removes entries and overwrites their bytes on disk. `noted stats` shows totals, where the cache file is, and which User-Agent is in use.
 
