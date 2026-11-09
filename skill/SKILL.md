@@ -7,6 +7,22 @@ description: Fetch any URL (web page, wiki article, docs, JSON API) through the 
 
 `noted get` fetches a URL once, keeps it in a local cache, and serves it from disk until its TTL runs out. HTML comes back as compact markdown. Repeat reads cost no network request, so fetch again instead of copying pages into notes.
 
+## First run: choosing a User-Agent
+
+When `noted get` exits with code 3 and says `no User-Agent is set`, stop and ask the user how your requests should identify themselves. Offer exactly these three choices:
+
+1. **Recommended:** your name and version plus the user's contact, e.g. `Claude-Code/2.1 (+mailto:<their email>)`. Ask the user for the contact; leave it out if they'd rather not give one.
+2. **Their own string:** use it exactly as they type it.
+3. **Your usual User-Agent:** the one you normally send, e.g. `Claude-User (claude-code/<version>; +https://support.anthropic.com/)` for Claude Code.
+
+Save the answer, then retry the fetch:
+
+```
+noted config user-agent "<their choice>"
+```
+
+Make this choice once. Later sessions reuse the saved value, and `noted config user-agent` prints it.
+
 ## Reading a page
 
 ```
@@ -20,6 +36,7 @@ noted get <url> --section "<heading>"
 - stderr carries one status line, e.g. `noted: hit · age 3h · ttl 7d · 200 text/html`. `miss` is a first fetch, `hit` means it came from the cache, `refreshed` means the server sent a new copy, `revalidated` means the server confirmed nothing changed, and `stale` means the server was unreachable, timed out or returned a 5xx, so you got the cached copy.
 - Exit 1 with `noted: HTTP <code>` on stderr means stdout holds the server's error page, not the content you asked for.
 - If the markdown comes back empty, the page probably renders with JavaScript. Check `--raw` to see what the server sent.
+- `robots.txt on <host> disallows <path>` means the site has asked agents like you not to fetch that page. Tell the user and leave the page alone; reaching for curl or another tool to get around it goes against what the site asked.
 
 ## Choosing a TTL
 

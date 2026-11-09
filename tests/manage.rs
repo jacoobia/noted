@@ -149,3 +149,23 @@ fn rm_all_leaves_no_page_bytes_on_disk() {
         }
     }
 }
+
+#[test]
+fn stats_shows_the_user_agent_and_its_source() {
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    noted(&db)
+        .arg("stats")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "user agent: {} (NOTED_USER_AGENT)",
+            common::TEST_AGENT
+        )));
+    noted(&db)
+        .env_remove("NOTED_USER_AGENT")
+        .arg("stats")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("user agent: not set"));
+}

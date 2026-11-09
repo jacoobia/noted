@@ -21,6 +21,11 @@ const SCHEMA: &str = "
         ttl_secs INTEGER NOT NULL,
         hits INTEGER NOT NULL DEFAULT 0
     );
+    CREATE TABLE IF NOT EXISTS robots (
+        origin TEXT PRIMARY KEY,
+        body TEXT NOT NULL,
+        fetched_at INTEGER NOT NULL
+    );
 ";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,7 +171,27 @@ impl Store {
         Ok(removed)
     }
 
+    pub fn robots(&self, origin: &str) -> Result<Option<(String, i64)>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT body, fetched_at FROM robots WHERE origin = ?1",
+                [origin],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?)
+    }
+
+    pub fn put_robots(&self, origin: &str, body: &str, fetched_at: i64) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO robots (origin, body, fetched_at) VALUES (?1, ?2, ?3)",
+            params![origin, body, fetched_at],
+        )?;
+        Ok(())
+    }
+
     pub fn clear(&self) -> Result<usize> {
+        self.conn.execute("DELETE FROM robots", [])?;
         let removed = self.conn.execute("DELETE FROM entries", [])?;
         self.flush_wal()?;
         Ok(removed)
@@ -304,6 +329,32 @@ mod tests {
         let mut e = entry("https://a.io/", 100);
         e.ttl_secs = i64::MAX;
         assert!(e.is_fresh(i64::MAX - 1));
+    }
+
+    #[test]
+    fn robots_rules_round_trip_and_replace() {
+        let (_dir, store) = store();
+        assert_eq!(store.robots("https://a.io").unwrap(), None);
+        store
+            .put_robots("https://a.io", "User-agent: *", 100)
+            .unwrap();
+        store
+            .put_robots("https://a.io", "Disallow: /x", 200)
+            .unwrap();
+        assert_eq!(
+            store.robots("https://a.io").unwrap(),
+            Some(("Disallow: /x".to_owned(), 200))
+        );
+    }
+
+    #[test]
+    fn clear_also_forgets_robots_rules() {
+        let (_dir, store) = store();
+        store.put(&entry("https://a.io/", 0)).unwrap();
+        store.put_robots("https://a.io", "Disallow: /", 0).unwrap();
+        assert_eq!(store.clear().unwrap(), 1);
+        assert_eq!(store.robots("https://a.io").unwrap(), None);
+        assert!(store.list().unwrap().is_empty());
     }
 
     #[test]

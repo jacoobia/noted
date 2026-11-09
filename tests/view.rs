@@ -96,8 +96,7 @@ fn closed_stdout_exits_quietly() {
     )]);
     let dir = TempDir::new().unwrap();
     let db = dir.path().join("c.db");
-    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_noted"))
-        .env("NOTED_DB", &db)
+    let mut child = common::noted_process(&db)
         .args(["get", "-q", &server.url("/big")])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())

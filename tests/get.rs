@@ -1,9 +1,10 @@
 mod common;
 
 use std::process::Stdio;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
-use common::{Handler, Reply, Seen, TestServer, always, answer_once_then_reset, noted};
+use common::{
+    Reply, Seen, TEST_AGENT, TestServer, always, answer_once_then_reset, counting, noted,
+};
 use predicates::prelude::*;
 use tempfile::TempDir;
 
@@ -98,7 +99,7 @@ fn rejects_non_http_scheme() {
 }
 
 #[test]
-fn sends_user_agent() {
+fn sends_the_configured_user_agent() {
     let dir = TempDir::new().unwrap();
     let db = dir.path().join("c.db");
     let server = page_server();
@@ -106,23 +107,56 @@ fn sends_user_agent() {
         .args(["get", &server.url("/page")])
         .assert()
         .success();
-    let version = env!("CARGO_PKG_VERSION");
-    let agent = server.last_header("/page", "User-Agent").unwrap();
     assert_eq!(
-        agent,
-        format!("noted/{version} (+https://github.com/jacoobia/noted)")
+        server.last_header("/page", "User-Agent").unwrap(),
+        TEST_AGENT
     );
 
+    let saved = "Claude-Code/2.1 (+mailto:jo@example.com)";
     noted(&db)
-        .env("NOTED_CONTACT", "me@x")
+        .args(["config", "user-agent", saved])
+        .assert()
+        .success();
+    noted(&db)
+        .env_remove("NOTED_USER_AGENT")
         .args(["get", "--refresh", &server.url("/page")])
         .assert()
         .success();
-    let agent = server.last_header("/page", "User-Agent").unwrap();
-    assert_eq!(
-        agent,
-        format!("noted/{version} (+https://github.com/jacoobia/noted; me@x)")
-    );
+    assert_eq!(server.last_header("/page", "User-Agent").unwrap(), saved);
+}
+
+#[test]
+fn fetching_without_a_user_agent_asks_for_setup() {
+    let dir = TempDir::new().unwrap();
+    let server = page_server();
+    noted(&dir.path().join("c.db"))
+        .env_remove("NOTED_USER_AGENT")
+        .args(["get", &server.url("/page")])
+        .assert()
+        .code(3)
+        .stdout("")
+        .stderr(
+            predicate::str::contains("no User-Agent is set")
+                .and(predicate::str::contains("noted config user-agent")),
+        );
+    assert_eq!(server.hits("/page"), 0);
+}
+
+#[test]
+fn cache_hits_need_no_user_agent() {
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("c.db");
+    let server = page_server();
+    noted(&db)
+        .args(["get", &server.url("/page")])
+        .assert()
+        .success();
+    noted(&db)
+        .env_remove("NOTED_USER_AGENT")
+        .args(["get", &server.url("/page")])
+        .assert()
+        .success()
+        .stdout("hello page");
 }
 
 #[test]
@@ -138,8 +172,7 @@ fn concurrent_processes_succeed() {
     let server = TestServer::start(routes);
     let children: Vec<_> = (0..8)
         .map(|i| {
-            std::process::Command::new(env!("CARGO_BIN_EXE_noted"))
-                .env("NOTED_DB", &db)
+            common::noted_process(&db)
                 .args(["get", &server.url(&format!("/p{i}"))])
                 .stdout(Stdio::null())
                 .stderr(Stdio::piped())
@@ -161,11 +194,6 @@ fn concurrent_processes_succeed() {
         .stdout
         .clone();
     assert_eq!(String::from_utf8(listing).unwrap().lines().count(), 8);
-}
-
-fn counting(reply: impl Fn(usize) -> Reply + Send + Sync + 'static) -> Handler {
-    let calls = AtomicUsize::new(0);
-    Box::new(move |_| reply(calls.fetch_add(1, Ordering::SeqCst) + 1))
 }
 
 #[test]

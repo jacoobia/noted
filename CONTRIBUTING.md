@@ -20,15 +20,19 @@ The pre-commit hook checks a copy of what you've staged: `cargo fmt --check`, `c
 | File | What it does |
 |---|---|
 | `src/main.rs` | Argument parsing and dispatch |
+| `src/lib.rs` | The module list |
 | `src/get.rs` | The `get` flow: fresh, stale, miss, revalidate, fallback |
 | `src/cache.rs` | The SQLite store. All SQL lives here. |
-| `src/fetch.rs` | HTTP requests, User-Agent, timeouts |
+| `src/config.rs` | The saved User-Agent and `NOTED_USER_AGENT` |
+| `src/robots.rs` | robots.txt parsing and matching (RFC 9309) |
+| `src/fetch.rs` | HTTP requests and timeouts |
 | `src/view.rs` | HTML to markdown, `--section` |
 | `src/manage.rs` | `ls`, `rm`, `stats` |
 | `src/hook.rs` | The Claude Code hook and curl rewriting |
 | `src/output.rs` | Writing to stdout, size and duration formatting |
 | `skill/SKILL.md` | The agent skill |
 | `tests/` | Integration tests, run against a local test server |
+| `tests/fixtures/` | Saved pages the HTML conversion tests read |
 
 ## Standards
 
