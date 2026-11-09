@@ -6,7 +6,7 @@ noted is a fetch CLI for coding agents. It keeps web pages and API responses in 
 
 ```
 $ noted get https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/at --section Description
-noted: hit · age 55s · ttl 7d · 200 text/html
+noted: hit · age 55s · ttl 7d · 200 text/html · 168KB
 ## [Description](#description)
 
 The `at()` method is equivalent to the bracket notation when `index` is a non-negative integer. For example, `array[0]` and `array.at(0)` both return the first item. ...
@@ -53,7 +53,7 @@ Nothing in the User-Agent mentions noted. Sites see the agent and the person run
 ## Usage
 
 ```
-noted get <url> [--ttl <duration>] [--section <heading>] [--refresh] [--raw] [-q]
+noted get <url> [--ttl <duration>] [--section <heading> | --outline] [--refresh] [--raw] [-q]
 noted ls
 noted rm <url>... | --stale | --all
 noted stats
@@ -63,7 +63,8 @@ noted config user-agent [<value>]
 | Option | What it does |
 |---|---|
 | `--ttl 7d` | How long the copy stays fresh: `5m`, `1h`, `7d`, `30d` and so on. A new entry defaults to 1 day. Later calls without `--ttl` keep the stored TTL. `0s` checks with the server every time. |
-| `--section <heading>` | Prints one heading and everything under it, up to the next heading at the same level or higher. Matching ignores case, and the first match wins. When nothing matches, noted exits 1 and lists the headings it found, which is also a quick way to see a page's outline. |
+| `--section <heading>` | Prints one heading and everything under it, up to the next heading at the same level or higher. Matching ignores case, and the first match wins. When nothing matches, noted exits 1 and lists the headings it found. |
+| `--outline` | Prints just the page's headings, to judge a long page before reading any of it. |
 | `--refresh` | Checks with the server even when the copy is still fresh. |
 | `--raw` | Prints HTML as the server sent it. Other content types, JSON included, always come back byte for byte, so `noted get <url> \| jq .name` works without it. |
 | `-q` | Hides the status line. |

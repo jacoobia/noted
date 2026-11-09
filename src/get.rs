@@ -7,9 +7,9 @@ use url::Url;
 use crate::cache::{Entry, Store, now};
 use crate::config::require_user_agent;
 use crate::fetch::{Response, fetch};
-use crate::output::{emit, short_duration};
+use crate::output::{emit, short_duration, short_size};
 use crate::robots::{is_allowed, path_and_query, product_token, robots_url};
-use crate::view::{html_to_markdown, is_html, section};
+use crate::view::{html_to_markdown, is_html, outline, section};
 
 const DEFAULT_TTL_SECS: i64 = 24 * 60 * 60;
 const ROBOTS_TTL_SECS: i64 = 24 * 60 * 60;
@@ -21,8 +21,14 @@ pub struct GetArgs {
     pub ttl: Option<Duration>,
     pub refresh: bool,
     pub raw: bool,
-    pub section: Option<String>,
+    pub select: Select,
     pub quiet: bool,
+}
+
+pub enum Select {
+    Whole,
+    Section(String),
+    Outline,
 }
 
 pub fn cache_key(url: &str) -> Result<String> {
@@ -235,16 +241,17 @@ fn http_error(status: u16) -> ExitCode {
 fn serve(entry: &Entry, state: &str, now: i64, args: &GetArgs) -> Result<ExitCode> {
     if !args.quiet {
         eprintln!(
-            "noted: {state} · age {} · ttl {} · {} {}",
+            "noted: {state} · age {} · ttl {} · {} {} · {}",
             short_duration(now - entry.fetched_at),
             short_duration(entry.ttl_secs),
             entry.status,
             entry.content_type.as_deref().unwrap_or("-"),
+            short_size(i64::try_from(entry.body.len()).unwrap_or(i64::MAX)),
         );
     }
     let content_type = entry.content_type.as_deref();
     let html = is_html(content_type);
-    if let Some(heading) = &args.section {
+    if !matches!(args.select, Select::Whole) {
         if !html
             && !content_type.is_some_and(|ct| {
                 ct.get(..5)
@@ -252,7 +259,7 @@ fn serve(entry: &Entry, state: &str, now: i64, args: &GetArgs) -> Result<ExitCod
             })
         {
             bail!(
-                "--section needs an HTML or text response, got {}",
+                "--section and --outline need an HTML or text response, got {}",
                 content_type.unwrap_or("no content type")
             );
         }
@@ -261,6 +268,15 @@ fn serve(entry: &Entry, state: &str, now: i64, args: &GetArgs) -> Result<ExitCod
             html_to_markdown(&text)
         } else {
             text.into_owned()
+        };
+        let Select::Section(heading) = &args.select else {
+            let headings = outline(&text);
+            if headings.is_empty() {
+                eprintln!("noted: no headings on this page");
+            } else {
+                emit(format!("{}\n", headings.join("\n")).as_bytes())?;
+            }
+            return Ok(ExitCode::SUCCESS);
         };
         return match section(&text, heading) {
             Ok(part) => {
