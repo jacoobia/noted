@@ -1,3 +1,4 @@
+use std::fmt::Write;
 use std::io::Read;
 use std::process::ExitCode;
 use std::time::Duration;
@@ -39,6 +40,9 @@ enum Command {
         /// Print only the page's headings
         #[arg(long, conflicts_with = "section")]
         outline: bool,
+        /// Longest to wait for a rate-limited host before giving up with exit code 4
+        #[arg(long, value_parser = humantime::parse_duration, default_value = "60s")]
+        max_wait: Duration,
         /// Skip the status line on stderr
         #[arg(long, short)]
         quiet: bool,
@@ -76,7 +80,7 @@ const GET_HELP: &str = "Fetch a URL, serving it from the cache while fresh.
 
 A copy stays fresh for its TTL, which counts from the last time the server sent it or confirmed it unchanged (a 304). Once it goes stale, noted asks the server again. If the server can't be reached (offline, a timeout or a 5xx), you get the stale copy with a warning. A page that was never cached can't be fetched offline.
 
-Exit codes: 0 success, 1 an error or a robots.txt refusal, 3 no User-Agent set yet, 64 bad arguments.";
+Exit codes: 0 success, 1 an error or a robots.txt refusal, 3 no User-Agent set yet, 4 the host is rate limited for longer than --max-wait, 64 bad arguments.";
 
 const HOOK_HELP: &str = "Handle a Claude Code pre-tool-use hook event from stdin.
 
@@ -104,6 +108,13 @@ enum Setting {
         #[arg(value_parser = config::validate_user_agent)]
         value: Option<String>,
     },
+    /// List per-host request gaps, or set one (0s removes it)
+    Rate {
+        #[arg(value_parser = config::validate_host)]
+        host: Option<String>,
+        #[arg(value_parser = humantime::parse_duration, requires = "host")]
+        gap: Option<Duration>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -126,6 +137,8 @@ fn main() -> ExitCode {
         eprintln!("noted: {err:#}");
         if err.is::<config::SetupNeeded>() {
             ExitCode::from(config::SETUP_NEEDED)
+        } else if err.is::<get::RateLimited>() {
+            ExitCode::from(get::RATE_LIMITED)
         } else if err.is::<config::InvalidEnvUserAgent>() {
             ExitCode::from(USAGE_ERROR)
         } else {
@@ -144,6 +157,7 @@ fn run(command: Command) -> Result<ExitCode> {
             plain,
             section,
             outline,
+            max_wait,
             quiet,
         } => {
             get::cache_key(&url)?;
@@ -166,6 +180,7 @@ fn run(command: Command) -> Result<ExitCode> {
                     refresh,
                     format,
                     select,
+                    max_wait,
                     quiet,
                 },
             )
@@ -181,6 +196,9 @@ fn run(command: Command) -> Result<ExitCode> {
         Command::Config {
             setting: Setting::UserAgent { value },
         } => user_agent_setting(value),
+        Command::Config {
+            setting: Setting::Rate { host, gap },
+        } => rate_setting(host.as_deref(), gap),
         Command::Hook => unreachable!("handled in main"),
     }
 }
@@ -196,6 +214,24 @@ fn user_agent_setting(value: Option<String>) -> Result<ExitCode> {
         return Ok(ExitCode::from(config::SETUP_NEEDED));
     };
     noted::output::emit(format!("{current}\n").as_bytes())?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn rate_setting(host: Option<&str>, gap: Option<Duration>) -> Result<ExitCode> {
+    if let (Some(host), Some(gap)) = (host, gap) {
+        config::set_rate(host, gap)?;
+        return Ok(ExitCode::SUCCESS);
+    }
+    let mut listing = String::new();
+    for (known, gap) in config::rate_overrides()? {
+        if host.is_none_or(|wanted| wanted == known) {
+            let _ = writeln!(listing, "{known} {}", humantime::format_duration(gap));
+        }
+    }
+    if let (Some(host), true) = (host, listing.is_empty()) {
+        eprintln!("noted: no override for {host}");
+    }
+    noted::output::emit(listing.as_bytes())?;
     Ok(ExitCode::SUCCESS)
 }
 

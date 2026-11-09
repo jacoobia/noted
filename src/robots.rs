@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use url::Url;
 
 const MAX_ROBOTS_BYTES: usize = 500 * 1024;
@@ -30,19 +32,7 @@ pub fn is_allowed(robots_txt: &str, token: &str, path: &str) -> bool {
     }
     let path = normalise(path);
     let groups = parse(robots_txt);
-    let named: Vec<&Group> = groups
-        .iter()
-        .filter(|group| group.agents.iter().any(|a| a.eq_ignore_ascii_case(token)))
-        .collect();
-    let chosen = if named.is_empty() {
-        groups
-            .iter()
-            .filter(|group| group.agents.iter().any(|a| a == "*"))
-            .collect()
-    } else {
-        named
-    };
-    chosen
+    chosen_groups(&groups, token)
         .iter()
         .flat_map(|group| &group.rules)
         .filter(|rule| !rule.pattern.is_empty() && pattern_matches(&rule.pattern, &path))
@@ -50,9 +40,33 @@ pub fn is_allowed(robots_txt: &str, token: &str, path: &str) -> bool {
         .is_none_or(|rule| rule.allow)
 }
 
+pub fn crawl_delay(robots_txt: &str, token: &str) -> Option<Duration> {
+    let groups = parse(robots_txt);
+    chosen_groups(&groups, token)
+        .iter()
+        .filter_map(|group| group.crawl_delay)
+        .max()
+}
+
+fn chosen_groups<'a>(groups: &'a [Group], token: &str) -> Vec<&'a Group> {
+    let named: Vec<&Group> = groups
+        .iter()
+        .filter(|group| group.agents.iter().any(|a| a.eq_ignore_ascii_case(token)))
+        .collect();
+    if named.is_empty() {
+        groups
+            .iter()
+            .filter(|group| group.agents.iter().any(|a| a == "*"))
+            .collect()
+    } else {
+        named
+    }
+}
+
 struct Group {
     agents: Vec<String>,
     rules: Vec<Rule>,
+    crawl_delay: Option<Duration>,
 }
 
 struct Rule {
@@ -77,6 +91,7 @@ fn parse(robots_txt: &str) -> Vec<Group> {
                     groups.push(Group {
                         agents: Vec::new(),
                         rules: Vec::new(),
+                        crawl_delay: None,
                     });
                 }
                 if let Some(group) = groups.last_mut() {
@@ -90,6 +105,15 @@ fn parse(robots_txt: &str) -> Vec<Group> {
                         allow: key == "allow",
                         pattern: normalise(value),
                     });
+                }
+                collecting_agents = false;
+            }
+            "crawl-delay" => {
+                if let Some(group) = groups.last_mut() {
+                    group.crawl_delay = value
+                        .parse::<f64>()
+                        .ok()
+                        .and_then(|secs| Duration::try_from_secs_f64(secs).ok());
                 }
                 collecting_agents = false;
             }
@@ -253,6 +277,24 @@ mod tests {
         assert!(!is_allowed(robots, "Bot", "/a%2Fb"));
         assert!(!is_allowed(robots, "Bot", "/~user/home"));
         assert!(is_allowed(robots, "Bot", "/a/b"));
+    }
+
+    #[test]
+    fn crawl_delay_comes_from_the_chosen_group() {
+        let robots = "User-agent: *\nCrawl-delay: 10\n\nUser-agent: Claude-User\nCrawl-delay: 2.5\nDisallow: /x\n";
+        assert_eq!(
+            crawl_delay(robots, "Claude-User"),
+            Some(Duration::from_millis(2500))
+        );
+        assert_eq!(
+            crawl_delay(robots, "OtherBot"),
+            Some(Duration::from_secs(10))
+        );
+        assert_eq!(crawl_delay("User-agent: *\nDisallow: /x\n", "Bot"), None);
+        assert_eq!(
+            crawl_delay("User-agent: *\nCrawl-delay: soon\n", "Bot"),
+            None
+        );
     }
 
     #[test]
