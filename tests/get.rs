@@ -52,7 +52,7 @@ fn fragment_shares_entry() {
     let db = dir.path().join("c.db");
     let server = page_server();
     noted(&db)
-        .args(["get", &format!("{}#Drops", server.url("/page"))])
+        .args(["get", &format!("{}#Anatomy", server.url("/page"))])
         .assert()
         .success();
     noted(&db)

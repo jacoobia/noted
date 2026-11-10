@@ -8,7 +8,7 @@ const WIKI: &str = include_str!("fixtures/wiki.html");
 
 fn wiki_server() -> TestServer {
     TestServer::start(vec![(
-        "/w/Abyssal_demon",
+        "/w/Octopus",
         always(|| Reply::ok("text/html; charset=utf-8", WIKI)),
     )])
 }
@@ -18,10 +18,10 @@ fn html_prints_as_markdown() {
     let dir = TempDir::new().unwrap();
     let server = wiki_server();
     noted(&dir.path().join("c.db"))
-        .args(["get", "-q", &server.url("/w/Abyssal_demon")])
+        .args(["get", "-q", &server.url("/w/Octopus")])
         .assert()
         .success()
-        .stdout(predicate::str::contains("## Drops").and(predicate::str::contains("<div").not()));
+        .stdout(predicate::str::contains("## Anatomy").and(predicate::str::contains("<div").not()));
 }
 
 #[test]
@@ -29,7 +29,7 @@ fn raw_prints_original_html() {
     let dir = TempDir::new().unwrap();
     let server = wiki_server();
     noted(&dir.path().join("c.db"))
-        .args(["get", "-q", "--raw", &server.url("/w/Abyssal_demon")])
+        .args(["get", "-q", "--raw", &server.url("/w/Octopus")])
         .assert()
         .success()
         .stdout(WIKI);
@@ -44,15 +44,15 @@ fn section_prints_one_part_of_the_page() {
             "get",
             "-q",
             "--section",
-            "drops",
-            &server.url("/w/Abyssal_demon"),
+            "anatomy",
+            &server.url("/w/Octopus"),
         ])
         .assert()
         .success()
         .stdout(
-            predicate::str::starts_with("## Drops")
-                .and(predicate::str::contains("| Ashes | 1 |"))
-                .and(predicate::str::contains("Trivia").not()),
+            predicate::str::starts_with("## Anatomy")
+                .and(predicate::str::contains("| Common octopus | 1 m |"))
+                .and(predicate::str::contains("Intelligence").not()),
         );
 }
 
@@ -61,17 +61,11 @@ fn missing_section_lists_headings() {
     let dir = TempDir::new().unwrap();
     let server = wiki_server();
     noted(&dir.path().join("c.db"))
-        .args([
-            "get",
-            "-q",
-            "--section",
-            "Nope",
-            &server.url("/w/Abyssal_demon"),
-        ])
+        .args(["get", "-q", "--section", "Nope", &server.url("/w/Octopus")])
         .assert()
         .code(1)
         .stdout("")
-        .stderr(predicate::str::contains("Drops, 100%, Trivia"));
+        .stderr(predicate::str::contains("Anatomy, Size (cm), Intelligence"));
 }
 
 #[test]
@@ -156,12 +150,12 @@ fn section_with_raw_still_reads_markdown() {
             "-q",
             "--raw",
             "--section",
-            "trivia",
-            &server.url("/w/Abyssal_demon"),
+            "intelligence",
+            &server.url("/w/Octopus"),
         ])
         .assert()
         .success()
-        .stdout(predicate::str::starts_with("## Trivia"));
+        .stdout(predicate::str::starts_with("## Intelligence"));
 }
 
 #[test]
@@ -169,17 +163,17 @@ fn outline_lists_the_page_headings() {
     let dir = TempDir::new().unwrap();
     let server = wiki_server();
     noted(&dir.path().join("c.db"))
-        .args(["get", "-q", "--outline", &server.url("/w/Abyssal_demon")])
+        .args(["get", "-q", "--outline", &server.url("/w/Octopus")])
         .assert()
         .success()
-        .stdout("## Drops\n### 100%\n## Trivia\n");
+        .stdout("## Anatomy\n### Size (cm)\n## Intelligence\n");
 }
 
 #[test]
 fn outline_and_section_cannot_be_combined() {
     let dir = TempDir::new().unwrap();
     noted(&dir.path().join("c.db"))
-        .args(["get", "--outline", "--section", "Drops", "https://a.io/"])
+        .args(["get", "--outline", "--section", "Anatomy", "https://a.io/"])
         .assert()
         .code(64);
 }
@@ -239,9 +233,9 @@ fn plain_strips_links_but_keeps_their_text_and_code() {
         always(|| {
             Reply::ok(
                 "text/html",
-                "<body><h2><a href=\"#drops\">Drops</a></h2>\
+                "<body><h2><a href=\"#anatomy\">Anatomy</a></h2>\
                  <p>See <a href=\"/w/Death_rune\">Death rune</a> and <code>[a](b)</code>.</p>\
-                 <table><tr><th>Item</th></tr><tr><td><a href=\"/w/Ashes\">Ashes</a></td></tr></table></body>",
+                 <table><tr><th>Species</th></tr><tr><td><a href=\"/wiki/Common_octopus\">Common octopus</a></td></tr></table></body>",
             )
         }),
     )]);
@@ -253,15 +247,15 @@ fn plain_strips_links_but_keeps_their_text_and_code() {
         .success()
         .stdout(
             predicate::str::contains("See Death rune and `[a](b)`.")
-                .and(predicate::str::contains("## Drops"))
-                .and(predicate::str::contains("| Ashes |"))
+                .and(predicate::str::contains("## Anatomy"))
+                .and(predicate::str::contains("| Common octopus |"))
                 .and(predicate::str::contains("](/w/").not()),
         );
     noted(&db)
         .args(["get", "-q", "--plain", "--outline", &server.url("/links")])
         .assert()
         .success()
-        .stdout("## Drops\n");
+        .stdout("## Anatomy\n");
 }
 
 #[test]

@@ -1,0 +1,4 @@
+contact_links:
+  - name: Security problem
+    url: https://github.com/jacoobia/noted/security/advisories/new
+    about: Report it privately instead of opening an issue.

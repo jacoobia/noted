@@ -2,6 +2,12 @@
   <img src="assets/header.svg" alt="noted: an agent asks whether Array.prototype.at() takes negative indexes, runs noted get on the MDN page, gets a cache hit and replies Noted.">
 </p>
 
+<p align="center">
+  <a href="https://github.com/jacoobia/noted/actions/workflows/ci.yml"><img src="https://github.com/jacoobia/noted/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/jacoobia/noted/releases/latest"><img src="https://img.shields.io/github/v/release/jacoobia/noted" alt="Latest release"></a>
+  <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue" alt="License: MIT OR Apache-2.0"></a>
+</p>
+
 noted is a fetch CLI for coding agents. It keeps web pages and API responses in a local cache and returns HTML as compact markdown. An agent can re-read the same docs page all session without another network request, and without dragging the whole page into its context.
 
 ```
@@ -99,12 +105,12 @@ Several agents can use the same cache at once. It's a single SQLite file in WAL 
 Some sites ask for a minimum gap between requests. noted takes the gap from the site's robots.txt `Crawl-delay` for your User-Agent, or from an override you set:
 
 ```
-noted config rate oldschool.runescape.wiki 2m
+noted config rate en.wikipedia.org 5s
 noted config rate                              # list overrides
-noted config rate oldschool.runescape.wiki 0s  # remove one
+noted config rate en.wikipedia.org 0s          # remove one
 ```
 
-Every agent sharing the cache books the next free slot for that host before it sends anything, and prints how long it's waiting: `noted: waiting 34s for oldschool.runescape.wiki (gap 2m)`. noted waits up to `--max-wait` in total, across any redirects. The default is 60s, which leaves room under the usual 2-minute agent command timeout. If the slot is further away than that:
+Every agent sharing the cache books the next free slot for that host before it sends anything, and prints how long it's waiting: `noted: waiting 3s for en.wikipedia.org (gap 5s)`. noted waits up to `--max-wait` in total, across any redirects. The default is 60s, which leaves room under the usual 2-minute agent command timeout. If the slot is further away than that:
 
 - with a stale copy cached, you get that copy and a warning, as when the site is offline;
 - otherwise noted fetches nothing and exits 4 with `retry after <time>`.
@@ -159,7 +165,7 @@ Rewritten commands go through the normal permission check, which is why the snip
 | `NOTED_TIMEOUT` | Request timeout, such as `10s`. Defaults to 30s. |
 | `NOTED_ALLOW_WEBFETCH` | Set to `1` to stop the hook denying WebFetch. |
 
-Per-host request gaps are set with `noted config rate` (see [Rate limits](#rate-limits)). They live in `rate-limits` in the same folder as the saved User-Agent, one `host gap` pair per line (for example `oldschool.runescape.wiki 2m`), so you can also edit the file by hand. noted warns about lines it can't read and leaves them in place.
+Per-host request gaps are set with `noted config rate` (see [Rate limits](#rate-limits)). They live in `rate-limits` in the same folder as the saved User-Agent, one `host gap` pair per line (for example `en.wikipedia.org 5s`), so you can also edit the file by hand. noted warns about lines it can't read and leaves them in place.
 
 A User-Agent must be 1 to 256 printable ASCII characters. noted refuses anything else, so a bad value can't inject headers.
 
@@ -169,12 +175,21 @@ A User-Agent must be 1 to 256 printable ASCII characters. noted refuses anything
 - A cached page can contain text written to steer an agent, and it keeps serving that text until it expires. Treat fetched content as untrusted input, cached or not.
 - noted only sends GET requests. The hook won't rewrite requests with auth headers, credentials, or common token and signature parameters in the URL. If you run `noted get` yourself on a URL that contains a secret, the URL and the response are cached like any other.
 
+To report a security problem, see [SECURITY.md](SECURITY.md).
+
 ## Limitations
 
 - Pages that build their content with JavaScript come back nearly empty. `--raw` shows what the server actually sent.
 - Pages that aren't UTF-8 are decoded lossily when converted to markdown. `--raw` keeps the original bytes.
 - On Windows, writing binary output straight to a console window fails. Pipe it or redirect it to a file instead.
 - Responses over 20MB are refused.
+
+## Uninstalling
+
+1. Delete the `noted` binary. The installers put it in `~/.cargo/bin` (`%USERPROFILE%\.cargo\bin` on Windows).
+2. Delete the cache file. `noted stats` prints where it is.
+3. Delete the config folder that holds the saved User-Agent and rate limits (see `NOTED_CONFIG_DIR` under [Configuration](#configuration)).
+4. If you set up Claude Code, remove the hook entry and the `Bash(noted get:*)` rule from `~/.claude/settings.json`, and delete `~/.claude/skills/noted`.
 
 ## Contributing
 
